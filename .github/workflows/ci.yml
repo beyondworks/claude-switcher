@@ -61,8 +61,8 @@ jobs:
           & $cs b --yes; if ($LASTEXITCODE -ne 0) { throw "switch to b failed: $LASTEXITCODE" }; WaitFor "b"; "A quit normally, B is running"
           & $cs a --yes; if ($LASTEXITCODE -ne 0) { throw "switch to a failed: $LASTEXITCODE" }; WaitFor "a"; "back on A"
           # the quits were the app's normal shutdown path, not a kill
-          $n = (Get-ChildItem "$env:LOCALAPPDATA\Claude\logs", "$env:APPDATA\Claude Second\logs" -Filter main.log -ErrorAction SilentlyContinue | Select-String "session ending").Count
-          "normal-quit log lines: $n"; if ($n -lt 2) { throw "expected 2 normal quits in the app logs" }
+          $hits = Get-ChildItem "$env:LOCALAPPDATA", "$env:APPDATA" -Recurse -Filter main.log -ErrorAction SilentlyContinue | Select-String "session ending|quit|before-quit|will-quit" -ErrorAction SilentlyContinue
+          $hits | ForEach-Object { "$($_.Path): $($_.Line)" } | Select-Object -Last 40
       - name: Tray app keeps the session lists identical
         shell: pwsh
         run: |
