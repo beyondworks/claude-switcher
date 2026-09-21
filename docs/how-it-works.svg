@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 400" font-family="-apple-system, Helvetica, Arial, sans-serif">
+  <style>
+    .box { fill: #ffffff; stroke: #c9c9c9; stroke-width: 1.5; }
+    .t { font-size: 15px; fill: #222; }
+    .s { font-size: 13px; fill: #666; }
+    .h { font-size: 17px; font-weight: 600; fill: #222; }
+    .c { font-size: 13px; fill: #666; text-anchor: middle; }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #1e1e20; stroke: #4a4a4e; } .t, .h { fill: #eee; } .s, .c { fill: #a8a8ad; }
+    }
+  </style>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a8a8f"/></marker></defs>
+
+  <!-- account A -->
+  <rect class="box" x="20" y="24" width="320" height="140" rx="12"/>
+  <circle cx="48" cy="54" r="9" fill="#D97857"/>
+  <text class="h" x="66" y="60">Account A</text>
+  <text class="t" x="40" y="94">…/Application Support/Claude</text>
+  <text class="s" x="40" y="120">its own login, always logged in</text>
+  <text class="s" x="40" y="142">session list: sessions/&lt;account A&gt;/&lt;org&gt;</text>
+
+  <!-- account B -->
+  <rect class="box" x="580" y="24" width="320" height="140" rx="12"/>
+  <circle cx="608" cy="54" r="9" fill="#26BFA4"/>
+  <text class="h" x="626" y="60">Account B</text>
+  <text class="t" x="600" y="94">…/Application Support/Claude Second</text>
+  <text class="s" x="600" y="120">its own login, always logged in</text>
+  <text class="s" x="600" y="142">session list: sessions/&lt;account B&gt;/&lt;org&gt;</text>
+
+  <!-- sync -->
+  <path d="M 352 104 L 568 104" stroke="#8a8a8f" stroke-width="2" marker-end="url(#a)" marker-start="url(#a)"/>
+  <text class="c" x="460" y="90">cs_sync (launchd)</text>
+  <text class="c" x="460" y="128">session lists kept identical</text>
+  <text class="c" x="460" y="146">within seconds</text>
+
+  <!-- transcripts -->
+  <path d="M 180 164 L 300 226" stroke="#bdbdc2" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <path d="M 740 164 L 620 226" stroke="#bdbdc2" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <rect class="box" x="220" y="226" width="480" height="66" rx="12"/>
+  <text class="h" x="244" y="253">~/.claude/projects — the conversations</text>
+  <text class="s" x="244" y="276">one place for every account; the app never splits these</text>
+
+  <!-- switch -->
+  <rect class="box" x="140" y="318" width="640" height="62" rx="12"/>
+  <text class="h" x="164" y="344">⌘ Page Down · menu bar · claude-switch</text>
+  <text class="s" x="164" y="366">quit the running account → sync once → open the next one (only one runs at a time)</text>
+</svg>

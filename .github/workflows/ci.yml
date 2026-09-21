@@ -1,0 +1,16 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests (sync engine, folder detection)
+        run: python3 -m unittest discover tests -v
+      - name: Build menu bar app
+        run: swiftc -O menubar/main.swift -o ClaudeSwitcher
+      - name: Shell syntax
+        run: zsh -n install.sh && zsh -n uninstall.sh
