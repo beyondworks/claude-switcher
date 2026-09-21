@@ -62,8 +62,6 @@ jobs:
           & $cs b --yes; if ($LASTEXITCODE -ne 0) { throw "switch to b failed: $LASTEXITCODE" }; WaitFor "b"; "A quit normally, B is running"
           & $cs a --yes; if ($LASTEXITCODE -ne 0) { throw "switch to a failed: $LASTEXITCODE" }; WaitFor "a"; "back on A"
           # the quits were the app's normal shutdown path, not a kill
-          Start-Sleep 5
-          foreach ($f in "$env:LOCALAPPDATA\Claude\logs\main.log", "$env:LOCALAPPDATA\Claude Second\logs\main.log") { "--- $f"; Get-Content $f | Select-String "^\d{4}-" | Select-Object -Last 25 | ForEach-Object { $_.Line.Substring(0, [Math]::Min(160, $_.Line.Length)) } }
           $n = (Get-ChildItem "$env:LOCALAPPDATA\Claude\logs", "$env:LOCALAPPDATA\Claude Second\logs" -Filter main.log | Select-String "Windows session ending").Count
           "normal-quit log lines: $n"; if ($n -lt 2) { throw "expected a normal quit of A and of B in the app logs" }
       - name: Folder detection reads the per-account logs

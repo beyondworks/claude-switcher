@@ -154,6 +154,24 @@ def confirm(n):
     return r.returncode == 0 and "Switch" in r.stdout
 
 
+def win_wait_ready(pid, data_dir, timeout=30):
+    """A quit message that arrives while the app is still starting ends it without its own quit
+    cleanup (seen in CI: the log stops mid-startup, no "quitting the app" line). Wait until this run of
+    the app has logged "boot: done", or at most `timeout` seconds."""
+    # ponytail: keyed on one log line; if a future app stops writing it, this degrades to a 30 s wait
+    ps = f"(Get-Process -Id {pid}).StartTime.ToString('yyyy-MM-dd HH:mm:ss')"
+    started = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
+                             creationflags=NO_WINDOW).stdout.strip()
+    logs = [f for f in C.log_files([data_dir]) if os.path.exists(f)]
+    for _ in range(timeout):
+        for f in logs:
+            with open(f, errors="replace") as fh:
+                if any("boot: done" in l and l[:19] >= started for l in fh):
+                    return True
+        time.sleep(1)
+    return False
+
+
 def win_quit(pid):
     """Closing the window or `taskkill` only hides the app to the tray. What makes it quit normally is the
     log-off message pair Windows itself sends: WM_QUERYENDSESSION, then WM_ENDSESSION(TRUE)
@@ -186,8 +204,9 @@ def alive(pid):
         return False
 
 
-def quit_app(pid):
+def quit_app(pid, data_dir):
     if C.WINDOWS:
+        win_wait_ready(pid, data_dir)
         win_quit(pid)
     else:
         os.kill(pid, 15)  # SIGTERM: the app runs its normal quit cleanup
@@ -256,7 +275,7 @@ def cmd_switch(conf, target, yes, dry):
     if dry:
         print("  [dry-run] quit, sync, launch")
         return 0
-    if cur != "none" and not quit_app(running(conf)[cur]):
+    if cur != "none" and not quit_app(running(conf)[cur], conf["profiles"][cur]["data_dir"]):
         print(f"The app did not quit within {QUIT_TIMEOUT}s. Not forcing it (it may be saving).")
         return 4
     cs_sync.sync(conf["sync_dirs"])
