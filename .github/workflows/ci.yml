@@ -61,9 +61,13 @@ jobs:
           & $cs b --yes; if ($LASTEXITCODE -ne 0) { throw "switch to b failed: $LASTEXITCODE" }; WaitFor "b"; "A quit normally, B is running"
           & $cs a --yes; if ($LASTEXITCODE -ne 0) { throw "switch to a failed: $LASTEXITCODE" }; WaitFor "a"; "back on A"
           # the quits were the app's normal shutdown path, not a kill
-          $hits = Get-ChildItem "$env:LOCALAPPDATA", "$env:APPDATA" -Recurse -Filter main.log -ErrorAction SilentlyContinue | Select-String "session ending|quit|before-quit|will-quit" -ErrorAction SilentlyContinue
-          $hits | ForEach-Object { "$($_.Path): $($_.Line)" } | Select-Object -Last 40
-          Get-ChildItem "$env:LOCALAPPDATA", "$env:APPDATA" -Recurse -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "Claude" -and $_.FullName -notmatch "claude-switcher" } | ForEach-Object { "--- $($_.FullName) $($_.Length) B $($_.LastWriteTime)"; Get-Content $_.FullName -Tail 6 }
+          $n = (Get-ChildItem "$env:LOCALAPPDATA\Claude\logs", "$env:LOCALAPPDATA\Claude Second\logs" -Filter main.log | Select-String "Windows session ending").Count
+          "normal-quit log lines: $n"; if ($n -lt 2) { throw "expected a normal quit of A and of B in the app logs" }
+      - name: Folder detection reads the per-account logs
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$env:LOCALAPPDATA\claude-switcher\lib"
+          python -c "import os, cs_config as C; ps = [p for p in C.log_files([C.PRIMARY_DATA, C.SECOND_DATA]) if os.path.exists(p)]; print(*ps, sep='\n'); assert len(ps) == 2, ps"
       - name: Tray app keeps the session lists identical
         shell: pwsh
         run: |
