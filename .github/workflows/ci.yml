@@ -57,10 +57,12 @@ jobs:
           function Status { (& $cs status --short | Select-Object -Last 1).Trim() }
           function WaitFor($want) { for ($i = 0; $i -lt 60; $i++) { if ((Status) -eq $want) { return }; Start-Sleep 2 }; throw "status never became $want (now: $(Status))" }
           & $cs doctor
-          & $cs a; WaitFor "a"; "A is running"
-          & $cs b --yes; if ($LASTEXITCODE -ne 0) { throw "switch to b failed: $LASTEXITCODE" }; WaitFor "b"; "A quit normally, B is running"
-          & $cs a --yes; if ($LASTEXITCODE -ne 0) { throw "switch to a failed: $LASTEXITCODE" }; WaitFor "a"; "back on A"
+          & $cs a; WaitFor "a"; "A is running $(Get-Date -Format HH:mm:ss)"
+          & $cs b --yes; if ($LASTEXITCODE -ne 0) { throw "switch to b failed: $LASTEXITCODE" }; WaitFor "b"; "A quit normally, B is running $(Get-Date -Format HH:mm:ss)"
+          & $cs a --yes; if ($LASTEXITCODE -ne 0) { throw "switch to a failed: $LASTEXITCODE" }; WaitFor "a"; "back on A $(Get-Date -Format HH:mm:ss)"
           # the quits were the app's normal shutdown path, not a kill
+          Start-Sleep 5  # timeline: each quit must come after that run's "boot: done"
+          foreach ($f in "$env:LOCALAPPDATA\Claude\logs\main.log", "$env:LOCALAPPDATA\Claude Second\logs\main.log") { "--- $f"; Get-Content $f | Select-String "^\d{4}-" | Where-Object { $_.Line -match "boot: done|session ending|Starting app|quit|Loaded https" } | ForEach-Object { $_.Line.Substring(0, [Math]::Min(140, $_.Line.Length)) } }
           $n = (Get-ChildItem "$env:LOCALAPPDATA\Claude\logs", "$env:LOCALAPPDATA\Claude Second\logs" -Filter main.log | Select-String "Windows session ending").Count
           "normal-quit log lines: $n"; if ($n -lt 2) { throw "expected a normal quit of A and of B in the app logs" }
       - name: Folder detection reads the per-account logs
