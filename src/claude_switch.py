@@ -245,7 +245,7 @@ def cmd_setup(conf, quiet=False):
 
 def cmd_add(conf, label):
     # first account without a data folder yet (B exists in the defaults), otherwise the next letter
-    key = next((k for k, p in conf["profiles"].items() if not os.path.isdir(p["data_dir"])), None)
+    key = next((k for k, p in conf["profiles"].items() if not is_primary(conf, k) and not os.path.isdir(p["data_dir"])), None)
     if key is None:
         key = chr(ord(max(conf["profiles"])) + 1)
         conf["profiles"][key] = {"label": key.upper(), "data_dir": os.path.join(C.APP_SUPPORT, f"Claude {key.upper()}")}
