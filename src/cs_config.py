@@ -35,9 +35,10 @@ CLAUDE_LOG = os.path.join(HOME, "Library/Logs/Claude/main.log")  # macOS: one lo
 
 
 def log_files(data_dirs):
-    """macOS writes one shared main.log; Windows writes <data dir>\logs\main.log per data folder."""
+    """macOS writes one shared main.log. Windows: the default folder logs to %LOCALAPPDATA%\\Claude\\logs,
+    every other data folder to <data dir>\\logs (both observed on a Windows runner)."""
     if WINDOWS:
-        return [os.path.join(d, "logs", "main.log") for d in data_dirs]
+        return [os.path.join(_LOCAL, "Claude", "logs", "main.log")] + [os.path.join(d, "logs", "main.log") for d in data_dirs]
     return [CLAUDE_LOG]
 
 CONF_DIR = os.path.join(HOME, ".config/claude-switcher")

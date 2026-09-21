@@ -17,7 +17,9 @@ using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
+#pragma warning disable 649  // filled in by JavaScriptSerializer
 class Profile { public string key; public string label; public string data_dir; public bool primary; }
+#pragma warning restore 649
 
 class HotkeyWindow : NativeWindow, IDisposable {
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
@@ -179,8 +181,9 @@ class Tray : ApplicationContext {
         return bmp;
     }
 
-    // The symbol is the saturated (orange) part of the app icon; everything else becomes transparent.
-    // No usable icon: a plain dot in the account colour.
+    // The Windows app icon is a white symbol on an orange tile. Recolour the orange part in the account colour
+    // and keep the white symbol (edge pixels are mixed by how orange they are), so it reads on light and dark
+    // taskbars. No usable icon: a plain dot in the account colour.
     public static Bitmap Tinted(Color c, int size) {
         var src = AppBitmap(size);
         var dst = new Bitmap(size, size, PixelFormat.Format32bppArgb);
@@ -189,12 +192,13 @@ class Tray : ApplicationContext {
             for (int y = 0; y < size; y++)
                 for (int x = 0; x < size; x++) {
                     Color p = src.GetPixel(x, y);
+                    if (p.A == 0) continue;
                     int max = Math.Max(p.R, Math.Max(p.G, p.B)), min = Math.Min(p.R, Math.Min(p.G, p.B));
-                    double sat = max == 0 ? 0 : (max - min) / (double)max;
-                    int a = sat < 0.25 ? 0 : (int)(p.A * Math.Min(1.0, (sat - 0.25) / 0.25));
-                    if (a > 0) { hits++; dst.SetPixel(x, y, Color.FromArgb(a, c)); }
+                    double t = Math.Min(1.0, (max == 0 ? 0 : (max - min) / (double)max) / 0.5);
+                    if (t > 0.5) hits++;
+                    dst.SetPixel(x, y, Color.FromArgb(p.A, Mix(p.R, c.R, t), Mix(p.G, c.G, t), Mix(p.B, c.B, t)));
                 }
-        if (hits < size * size / 40) {
+        if (hits < size * size / 10) {
             using (var g = Graphics.FromImage(dst)) {
                 g.Clear(Color.Transparent);
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -203,6 +207,8 @@ class Tray : ApplicationContext {
         }
         return dst;
     }
+
+    static int Mix(int from, int to, double t) { return (int)Math.Round(from + (to - from) * t); }
 
     static Icon MakeIcon(Color c) { return Icon.FromHandle(Tinted(c, 32).GetHicon()); }
 
