@@ -1,0 +1,68 @@
+name: probe-windows
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - name: Download and install Claude (exe, per-user)
+        shell: pwsh
+        run: |
+          $u = "https://downloads.claude.ai/releases/win32/x64/1.44121.2/Claude-817a7b4563855a33d4b678faefc71f87554445d8.exe"
+          Invoke-WebRequest $u -OutFile $env:RUNNER_TEMP\claude-setup.exe
+          $p = Start-Process $env:RUNNER_TEMP\claude-setup.exe -ArgumentList "--silent" -PassThru
+          Start-Sleep 90
+          "installer exited: $($p.HasExited)"
+          Get-Process | Where-Object { $_.Path -like "*Claude*" -or $_.Path -like "*Anthropic*" } | Select-Object Id, Path | Format-Table -AutoSize | Out-String -Width 400
+          "== LOCALAPPDATA entries"; Get-ChildItem $env:LOCALAPPDATA | Where-Object Name -match "Claude|Anthropic" | Select-Object FullName
+          "== APPDATA entries";      Get-ChildItem $env:APPDATA      | Where-Object Name -match "Claude|Anthropic" | Select-Object FullName
+          "== AnthropicClaude tree";  Get-ChildItem "$env:LOCALAPPDATA\AnthropicClaude" -Depth 2 -ErrorAction SilentlyContinue | Select-Object FullName | Out-String -Width 400
+          "== Start menu shortcuts"; Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter *.lnk | Where-Object Name -match "Claude" | ForEach-Object { $s=(New-Object -ComObject WScript.Shell).CreateShortcut($_.FullName); "$($_.FullName) -> $($s.TargetPath) $($s.Arguments)" }
+          "== protocol handler";     reg query "HKCU\Software\Classes\claude\shell\open\command" /s 2>$null
+      - name: Stop anything the installer started
+        shell: pwsh
+        run: Get-Process | Where-Object { $_.Path -like "*AnthropicClaude*" } | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep 3
+      - name: Inspect app code (app.asar)
+        shell: pwsh
+        run: |
+          $asar = Get-ChildItem "$env:LOCALAPPDATA\AnthropicClaude" -Recurse -Filter app.asar | Select-Object -First 1
+          "asar: $($asar.FullName)"
+          npx --yes @electron/asar extract $asar.FullName $env:RUNNER_TEMP\asar | Out-Null
+          $js = Get-ChildItem $env:RUNNER_TEMP\asar\.vite\build -Filter *.js -Recurse
+          foreach ($pat in "requestSingleInstanceLock","second-instance","setAsDefaultProtocolClient","claude-code-sessions","O_NOFOLLOW","user-data-dir","Loaded \$\{","persisted sessions","logs") {
+            $hits = ($js | Select-String -Pattern $pat -SimpleMatch | Measure-Object).Count
+            "pattern [$pat]: $hits hits"
+          }
+          "== single instance context"
+          $js | Select-String -Pattern "requestSingleInstanceLock" -SimpleMatch | Select-Object -First 3 | ForEach-Object { $l=$_.Line; $i=$l.IndexOf("requestSingleInstanceLock"); $l.Substring([Math]::Max(0,$i-300), [Math]::Min(700, $l.Length-[Math]::Max(0,$i-300))) }
+          "== second-instance context"
+          $js | Select-String -Pattern '"second-instance"' -SimpleMatch | Select-Object -First 2 | ForEach-Object { $l=$_.Line; $i=$l.IndexOf('"second-instance"'); $l.Substring([Math]::Max(0,$i-200), [Math]::Min(900, $l.Length-[Math]::Max(0,$i-200))) }
+      - name: Run two instances with separate data folders
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\AnthropicClaude" -Recurse -Filter claude.exe | Where-Object FullName -match "app-" | Select-Object -First 1
+          "exe: $($exe.FullName)"
+          New-Item -ItemType Directory -Force C:\cs\p1, C:\cs\p2 | Out-Null
+          Start-Process $exe.FullName -ArgumentList "--user-data-dir=C:\cs\p1"
+          Start-Sleep 30
+          $one = Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -notmatch "--type=" }
+          "after first: main processes = $($one.Count)"; $one | ForEach-Object { "  $($_.ProcessId) $($_.CommandLine)" }
+          Start-Process $exe.FullName -ArgumentList "--user-data-dir=C:\cs\p2"
+          Start-Sleep 30
+          $two = Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -notmatch "--type=" }
+          "after second: main processes = $($two.Count)"; $two | ForEach-Object { "  $($_.ProcessId) $($_.CommandLine)" }
+          "== p1"; Get-ChildItem C:\cs\p1 | Select-Object Name | Out-String
+          "== p2"; Get-ChildItem C:\cs\p2 | Select-Object Name | Out-String
+          "== default data dir"; Get-ChildItem "$env:APPDATA\Claude" -ErrorAction SilentlyContinue | Select-Object Name | Out-String
+          "== log files anywhere under AppData"; Get-ChildItem $env:APPDATA, $env:LOCALAPPDATA -Recurse -Filter main.log -ErrorAction SilentlyContinue | Select-Object FullName, Length | Out-String -Width 400
+          $log = Get-ChildItem $env:APPDATA, $env:LOCALAPPDATA -Recurse -Filter main.log -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($log) { "== main.log tail"; Get-Content $log.FullName -Tail 40 }
+      - name: Graceful close test (no /F)
+        shell: pwsh
+        run: |
+          $procs = Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -notmatch "--type=" }
+          foreach ($p in $procs) { "taskkill $($p.ProcessId): " + (taskkill /PID $p.ProcessId 2>&1) }
+          Start-Sleep 15
+          $left = Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -notmatch "--type=" }
+          "still running after graceful close: $($left.Count)"
+          $log = Get-ChildItem $env:APPDATA, $env:LOCALAPPDATA -Recurse -Filter main.log -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($log) { Get-Content $log.FullName -Tail 15 }
