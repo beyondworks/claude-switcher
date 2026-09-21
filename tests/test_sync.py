@@ -84,6 +84,7 @@ class SyncTest(unittest.TestCase):
 
 class DetectTest(unittest.TestCase):
     def test_reads_account_org_folders_from_log(self):
+        J = os.path.join
         with tempfile.TemporaryDirectory() as t:
             data_a, data_b = os.path.join(t, "Claude"), os.path.join(t, "Claude Second")
             acct, org = "aaaaaaaa-0000-4000-8000-000000000001", "0000000a-0000-4000-8000-00000000000a"
@@ -91,23 +92,35 @@ class DetectTest(unittest.TestCase):
             acct3 = "11111111-2222-3333-4444-555555555555"
             log = os.path.join(t, "main.log")
             write(log, "\n".join([
-                f"2026-09-21 11:40:00 [info] Loaded 0 persisted sessions from {data_a}/claude-code-sessions/{acct}/{org2}",
-                f"2026-09-21 11:48:52 [info] Loaded 151 persisted sessions from {data_a}/claude-code-sessions/{acct}/{org}",
-                f"2026-09-21 11:48:51 [info] Loaded 122 persisted sessions from {data_a}/local-agent-mode-sessions/{acct}/{org}",
-                f"2026-09-21 12:12:24 [info] Loaded 113 persisted sessions from {data_b}/claude-code-sessions/{acct2}/{org2}",
+                f"2026-09-21 11:40:00 [info] Loaded 0 persisted sessions from {J(data_a, "claude-code-sessions", acct, org2)}",
+                f"2026-09-21 11:48:52 [info] Loaded 151 persisted sessions from {J(data_a, "claude-code-sessions", acct, org)}",
+                f"2026-09-21 11:48:51 [info] Loaded 122 persisted sessions from {J(data_a, "local-agent-mode-sessions", acct, org)}",
+                f"2026-09-21 12:12:24 [info] Loaded 113 persisted sessions from {J(data_b, "claude-code-sessions", acct2, org2)}",
                 f"2026-09-21 12:12:25 [info] Loaded 9 persisted sessions from /elsewhere/claude-code-sessions/{acct}/{org}",
-                f"2026-09-21 12:13:00 [info] Loaded 151 persisted sessions from {data_a}/claude-code-sessions/{acct}/{org}",
+                f"2026-09-21 12:13:00 [info] Loaded 151 persisted sessions from {J(data_a, "claude-code-sessions", acct, org)}",
                 # logging out: the app briefly reads another org of the same account AFTER the real one
-                f"2026-09-21 12:14:00 [info] Loaded 0 persisted sessions from {data_a}/claude-code-sessions/{acct}/{org2}",
+                f"2026-09-21 12:14:00 [info] Loaded 0 persisted sessions from {J(data_a, "claude-code-sessions", acct, org2)}",
                 # a brand-new account has only ever read one empty folder
-                f"2026-09-21 12:15:00 [info] Loaded 0 persisted sessions from {data_b}/claude-code-sessions/{acct3}/{org}",
+                f"2026-09-21 12:15:00 [info] Loaded 0 persisted sessions from {J(data_b, "claude-code-sessions", acct3, org)}",
             ]))
             found = cs_config.detect_session_dirs([data_a, data_b], log)
             self.assertEqual(sorted(found), sorted([
-                f"{data_a}/claude-code-sessions/{acct}/{org}",
-                f"{data_b}/claude-code-sessions/{acct2}/{org2}",
-                f"{data_b}/claude-code-sessions/{acct3}/{org}",
+                J(data_a, "claude-code-sessions", acct, org),
+                J(data_b, "claude-code-sessions", acct2, org2),
+                J(data_b, "claude-code-sessions", acct3, org),
             ]))
+
+
+    def test_falls_back_to_folders_on_disk(self):
+        """A data folder the log says nothing about: per account, the org folder with the most sessions."""
+        with tempfile.TemporaryDirectory() as t:
+            root = os.path.join(t, "Claude C", "claude-code-sessions", "cccccccc-0000-4000-8000-000000000003")
+            busy, empty = os.path.join(root, "0000000c-0000-4000-8000-00000000000c"), os.path.join(root, "0000000d-0000-4000-8000-00000000000d")
+            os.makedirs(busy)
+            for n in range(3):
+                write(os.path.join(busy, f"local_{n}.json"), "{}")
+            os.makedirs(empty)
+            self.assertEqual(cs_config.detect_session_dirs([os.path.join(t, "Claude C")], os.path.join(t, "none.log")), [busy])
 
 
 if __name__ == "__main__":

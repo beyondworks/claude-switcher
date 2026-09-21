@@ -12,7 +12,7 @@ No logging out, no logging in, no second copy of your work.
 
 [한국어 README](README.ko.md)
 
-> Unofficial community tool. Not affiliated with or endorsed by Anthropic. macOS only for now.
+> Unofficial community tool. Not affiliated with or endorsed by Anthropic. macOS, plus Windows (experimental).
 
 ---
 
@@ -62,6 +62,24 @@ cd claude-switcher
 The installer puts `claude-switch` in `~/.local/bin`, builds the menu bar app into `~/Applications`,
 starts it at login, and detects your current account's session folder.
 
+### Windows (experimental)
+
+Requirements: Windows 10/11, the Claude desktop app from [claude.ai/download](https://claude.ai/download)
+(the per-user installer), Python 3 (`winget install Python.Python.3.12`). Download
+`claude-switcher-<version>.zip` from the [latest release](https://github.com/beyondworks/claude-switcher/releases/latest),
+unzip it, and in that folder run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\install.ps1
+```
+
+You get the same three ways to switch: **Ctrl + Alt + Page Down** (plain Ctrl + Page Down is the browser's
+next-tab key), a tray icon in each account's colour, and `claude-switch` in a new terminal. There is no launchd
+on Windows, so the tray app also runs the sync every 20 seconds. Adding accounts works the same way
+(tray icon → **Add account…**).
+
+<p align="center"><img src="docs/windows-tray-icons.png" width="440" alt="Windows tray icons per account, on light and dark taskbars"></p>
+
 ### Add an account (once per account)
 
 Menu bar → **Add account…**, or in a terminal:
@@ -107,25 +125,30 @@ claude-switch doctor     # check folders and the sync job
 ## Safety
 
 - **Nothing is deleted outright.** A session removed on one account is moved to
-  `~/Library/Application Support/claude-switcher/trash/<date>/` on the others.
+  `~/Library/Application Support/claude-switcher/trash/<date>/` (Windows: `%LOCALAPPDATA%\claude-switcher\trash\`) on the others.
 - **Mass-delete guard.** If one sync would remove more than 20% of all files (and more than 5), it stops and logs instead.
 - **Real folders only.** The app refuses to save into a session folder that is a symlink (it opens it with `O_NOFOLLOW`),
   so Claude Switcher never links folders; it copies.
 - **One account at a time.** Switching refuses to run if more than one account is open, and never force-quits the app
-  (it waits up to 30 s for a normal quit).
+  (it waits up to 30 s for a normal quit). On Windows, closing the window only hides Claude in the tray, so Claude
+  Switcher sends the same "session ending" message Windows sends at sign-out; the app then quits normally.
 - A change made in the last few seconds before a switch may not have synced yet; the switch runs one extra sync to catch it.
 
 ## Uninstall
 
 ```bash
-./uninstall.sh
+./uninstall.sh                                                       # macOS
+powershell -ExecutionPolicy Bypass -File windows\uninstall.ps1       # Windows
 ```
 
 Removes the programs and background jobs. Your Claude data folders, logins and sessions are left as they are.
 
 ## Limitations
 
-- macOS only. Windows is untested.
+- **Windows is experimental.** CI checks it on a real Claude install: switching A → B → A, a normal quit of each
+  account, folder detection and the tray app's sync. What CI cannot check, because it has no logged-in account:
+  switching while logged in, the busy-session prompt, and the tray menu and hotkey themselves. Reports are welcome.
+  The Microsoft Store (MSIX) version of Claude is not supported yet.
 - Relies on the desktop app's current folder layout and log format. An app update could change them; `claude-switch doctor`
   will show it.
 - Using several accounts is subject to Anthropic's terms. Check the [usage policy](https://www.anthropic.com/legal/aup)
@@ -136,6 +159,7 @@ Removes the programs and background jobs. Your Claude data folders, logins and s
 ```bash
 python3 -m unittest discover tests      # sync engine and folder detection
 swiftc -O menubar/main.swift -o /tmp/ClaudeSwitcher
+# Windows tray app: C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe (see windows/install.ps1)
 ```
 
 Releases are made by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0`.

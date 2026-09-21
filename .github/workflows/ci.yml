@@ -14,3 +14,73 @@ jobs:
         run: swiftc -O menubar/main.swift -o ClaudeSwitcher
       - name: Shell syntax
         run: zsh -n install.sh && zsh -n uninstall.sh
+
+  # Windows is experimental: no Windows machine with a logged-in account is available to the maintainers,
+  # so this job checks everything that works without a login on a real Claude install.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: python -m unittest discover tests -v
+      - name: Install Claude (per-user) and let it self-update
+        shell: pwsh
+        run: |
+          $u = "https://downloads.claude.ai/releases/win32/x64/1.44121.2/Claude-817a7b4563855a33d4b678faefc71f87554445d8.exe"
+          Invoke-WebRequest $u -OutFile $env:RUNNER_TEMP\claude-setup.exe
+          Start-Process $env:RUNNER_TEMP\claude-setup.exe -ArgumentList "--silent" -Wait
+          Start-Sleep 120
+          Get-Process | Where-Object { $_.Path -like "*AnthropicClaude*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep 5
+      - name: Fake session folders for two accounts (no login in CI)
+        shell: pwsh
+        run: |
+          $a = "$env:APPDATA\Claude\claude-code-sessions\aaaaaaaa-0000-4000-8000-000000000001\0000000a-0000-4000-8000-00000000000a"
+          $b = "$env:APPDATA\Claude Second\claude-code-sessions\bbbbbbbb-0000-4000-8000-000000000002\0000000b-0000-4000-8000-00000000000b"
+          New-Item -ItemType Directory -Force $a, $b | Out-Null
+          Set-Content "$a\local_from_a.json" '{"title":"made on A"}'
+          Set-Content "$b\local_from_b.json" '{"title":"made on B"}'
+      - name: Install Claude Switcher
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File windows\install.ps1
+      - name: Tray icons (rendered from the installed app icon)
+        shell: pwsh
+        run: |
+          Start-Process "$env:LOCALAPPDATA\claude-switcher\ClaudeSwitcher.exe" -ArgumentList "--render-icons", "$pwd\icons" -Wait
+          Get-ChildItem icons | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with: { name: windows-tray-icons, path: icons }
+      - name: Switch A -> B -> A on the real app
+        shell: pwsh
+        run: |
+          $cs = "$env:LOCALAPPDATA\claude-switcher\bin\claude-switch.cmd"
+          function Status { (& $cs status --short | Select-Object -Last 1).Trim() }
+          function WaitFor($want) { for ($i = 0; $i -lt 60; $i++) { if ((Status) -eq $want) { return }; Start-Sleep 2 }; throw "status never became $want (now: $(Status))" }
+          & $cs doctor
+          & $cs a; WaitFor "a"; "A is running"
+          & $cs b --yes; if ($LASTEXITCODE -ne 0) { throw "switch to b failed: $LASTEXITCODE" }; WaitFor "b"; "A quit normally, B is running"
+          & $cs a --yes; if ($LASTEXITCODE -ne 0) { throw "switch to a failed: $LASTEXITCODE" }; WaitFor "a"; "back on A"
+          # the quits were the app's normal shutdown path, not a kill
+          $n = (Get-ChildItem "$env:LOCALAPPDATA\Claude\logs", "$env:LOCALAPPDATA\Claude Second\logs" -Filter main.log | Select-String "Windows session ending").Count
+          "normal-quit log lines: $n"; if ($n -lt 2) { throw "expected a normal quit of A and of B in the app logs" }
+      - name: Folder detection reads the per-account logs
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$env:LOCALAPPDATA\claude-switcher\lib"
+          python -c "import os, cs_config as C; ps = [p for p in C.log_files([C.PRIMARY_DATA, C.SECOND_DATA]) if os.path.exists(p)]; print(*ps, sep='\n'); assert len(ps) == 2, ps"
+      - name: Tray app keeps the session lists identical
+        shell: pwsh
+        run: |
+          $a = "$env:APPDATA\Claude\claude-code-sessions\aaaaaaaa-0000-4000-8000-000000000001\0000000a-0000-4000-8000-00000000000a"
+          $b = "$env:APPDATA\Claude Second\claude-code-sessions\bbbbbbbb-0000-4000-8000-000000000002\0000000b-0000-4000-8000-00000000000b"
+          Set-Content "$b\local_later.json" '{"title":"made on B while the tray runs"}'
+          for ($i = 0; $i -lt 30 -and -not (Test-Path "$a\local_later.json"); $i++) { Start-Sleep 2 }
+          Get-ChildItem $a, $b | Format-Table FullName
+          if (-not (Get-Process ClaudeSwitcher -ErrorAction SilentlyContinue)) { throw "tray app is not running" }
+          foreach ($n in "local_from_a.json", "local_from_b.json", "local_later.json") {
+            if (-not (Test-Path "$a\$n") -or -not (Test-Path "$b\$n")) { throw "$n is not in both folders" }
+          }
+          "sync ok"; Get-Content "$env:LOCALAPPDATA\claude-switcher\sync.log"
+      - name: Uninstall
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File windows\uninstall.ps1

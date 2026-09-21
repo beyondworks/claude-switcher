@@ -19,7 +19,7 @@ class AddTest(unittest.TestCase):
                   mock.patch.object(C, "save", lambda c: self.saved.update(c)),
                   mock.patch.object(C, "STATE_DIR", os.path.join(t, "state")),
                   mock.patch.object(cs, "PENDING", os.path.join(t, "state", "pending-setup")),
-                  mock.patch.object(cs.subprocess, "run")]:  # do not open a real Claude window
+                  mock.patch.object(cs, "open_window")]:  # do not open a real Claude window
             p.start()
             self.addCleanup(p.stop)
         os.makedirs(os.path.join(t, "Claude Second"))
@@ -38,9 +38,8 @@ class AddTest(unittest.TestCase):
         self.assertEqual(self.conf["profiles"]["d"]["label"], "D")
         self.assertTrue(os.path.isdir(os.path.join(self.tmp.name, "Claude D")))
         # the window is opened with the new account's own data folder
-        args = cs.subprocess.run.call_args[0][0]
         self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "state", "pending-setup")))
-        self.assertIn(f"--user-data-dir={os.path.join(self.tmp.name, 'Claude D')}", args)
+        cs.open_window.assert_called_with(os.path.join(self.tmp.name, "Claude D"))
 
     def test_unfinished_b_is_reused_before_adding_c(self):
         os.rmdir(os.path.join(self.tmp.name, "Claude Second"))

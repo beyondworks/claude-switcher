@@ -19,6 +19,7 @@ at a time. Code-tab session lists are kept identical by cs_sync (launchd).
 """
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,7 @@ import cs_config as C  # noqa: E402
 import cs_sync  # noqa: E402
 
 QUIT_TIMEOUT = 30
+NO_WINDOW = 0x08000000 if C.WINDOWS else 0  # CREATE_NO_WINDOW: no console flash when the tray runs us
 SYNC_LABEL = "io.github.claude-switcher.sync"
 SYNC_PLIST = os.path.join(C.HOME, "Library/LaunchAgents", SYNC_LABEL + ".plist")
 LAST = os.path.join(C.STATE_DIR, "last-account.json")
@@ -60,8 +62,33 @@ def is_primary(conf, key):
     return conf["profiles"][key]["data_dir"] == C.PRIMARY_DATA
 
 
+def win_processes():
+    """[(pid, ppid, name, command line)] of every process (Windows)."""
+    ps = ("Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine"
+          " | ConvertTo-Json -Compress")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
+                         creationflags=NO_WINDOW).stdout
+    rows = json.loads(out or "[]")
+    return [(r["ProcessId"], r["ParentProcessId"], r["Name"] or "", r["CommandLine"] or "") for r in rows]
+
+
+def win_is_app(name, cmd):
+    """The desktop app's main process: claude.exe from the AnthropicClaude install, not a helper (--type=).
+    Claude Code's own CLI is also called claude.exe, but it lives elsewhere."""
+    return name.lower() == "claude.exe" and "\\anthropicclaude\\" in cmd.lower() and "--type=" not in cmd
+
+
+def win_data_dir(cmd):
+    m = re.search(r'--user-data-dir=(.*?)(?:"|\s--|$)', cmd)
+    return m.group(1).strip() if m else C.PRIMARY_DATA
+
+
 def running(conf):
     """{key: pid} for the main (non-helper) Claude process of each profile."""
+    if C.WINDOWS:
+        by_dir = {C._norm(p["data_dir"]): k for k, p in conf["profiles"].items()}
+        return {by_dir[C._norm(win_data_dir(cmd))]: pid for pid, _, name, cmd in win_processes()
+                if win_is_app(name, cmd) and C._norm(win_data_dir(cmd)) in by_dir}
     out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
     by_dir = {p["data_dir"]: k for k, p in conf["profiles"].items()}
     found = {}
@@ -86,6 +113,18 @@ def current(conf):
 
 def busy_sessions(app_pid):
     """Number of `claude` CLI processes under the app = sessions that are working right now."""
+    if C.WINDOWS:
+        kids = {}
+        for pid, ppid, name, cmd in win_processes():
+            kids.setdefault(ppid, []).append((pid, name, cmd))
+        n, stack = 0, [app_pid]
+        while stack:
+            for pid, name, cmd in kids.get(stack.pop(), []):
+                if name.lower() == "claude.exe" and not win_is_app(name, cmd) and "--type=" not in cmd:
+                    n += 1
+                else:
+                    stack.append(pid)
+        return n
     rows = [l.split(None, 2) for l in subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True).stdout.splitlines()]
     kids = {}
     for pid, ppid, *cmd in rows:
@@ -102,8 +141,12 @@ def busy_sessions(app_pid):
 
 def confirm(n):
     msg = f"There are {n} session(s) still working. Switch anyway? The running work will stop."
-    if sys.stdin.isatty():
+    if sys.stdin and sys.stdin.isatty():
         return input(msg + " [y/N] ").strip().lower() in ("y", "yes")
+    if C.WINDOWS:
+        import ctypes
+        # MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST; IDOK = 1
+        return ctypes.windll.user32.MessageBoxW(None, msg, "Claude Switcher", 0x1 | 0x30 | 0x100 | 0x40000) == 1
     r = subprocess.run(["osascript", "-e",
                         f'display dialog "{msg}" with title "Claude Switcher" buttons {{"Cancel", "Switch"}} '
                         'default button "Cancel" cancel button "Cancel" with icon caution'],
@@ -111,18 +154,65 @@ def confirm(n):
     return r.returncode == 0 and "Switch" in r.stdout
 
 
+def win_quit(pid):
+    """Closing the window or `taskkill` only hides the app to the tray. What makes it quit normally is the
+    log-off message pair Windows itself sends: WM_QUERYENDSESSION, then WM_ENDSESSION(TRUE)
+    (verified: the log says "Windows session ending (shutdown) - quitting the app")."""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    hwnds = []
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(h, _):
+        owner = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(owner))
+        if owner.value == pid:
+            hwnds.append(h)
+        return True
+    u.EnumWindows(proc(each), 0)
+    r = ctypes.c_size_t()
+    for h in hwnds:
+        u.SendMessageTimeoutW(h, 0x11, 0, 0, 2, 3000, ctypes.byref(r))  # SMTO_ABORTIFHUNG, 3 s
+        u.SendMessageTimeoutW(h, 0x16, 1, 0, 2, 3000, ctypes.byref(r))
+
+
+def alive(pid):
+    if C.WINDOWS:
+        return any(p == pid for p, *_ in win_processes())
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 def quit_app(pid):
-    os.kill(pid, 15)  # SIGTERM: the app runs its normal quit cleanup
-    for _ in range(QUIT_TIMEOUT * 2):
-        time.sleep(0.5)
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+    if C.WINDOWS:
+        win_quit(pid)
+    else:
+        os.kill(pid, 15)  # SIGTERM: the app runs its normal quit cleanup
+    for _ in range(QUIT_TIMEOUT):
+        time.sleep(1)
+        if not alive(pid):
             return True
     return False
 
 
+def open_window(data_dir=None):
+    """Start the app (or bring up the running one) with that data folder; None = the default folder."""
+    if C.WINDOWS:
+        # the stub launcher forwards the argument to the current app-<version>\claude.exe
+        subprocess.Popen([C.APP] + ([f"--user-data-dir={data_dir}"] if data_dir else []),
+                         creationflags=0x00000008 | NO_WINDOW)  # DETACHED_PROCESS
+    elif data_dir:
+        subprocess.run(["open", "-n", C.APP, "--args", f"--user-data-dir={data_dir}"], check=True)
+    else:
+        subprocess.run(["open", "-a", C.APP], check=True)
+
+
 def launch(conf, who):
+    if C.WINDOWS:
+        return open_window(None if is_primary(conf, who) else conf["profiles"][who]["data_dir"])
     if is_primary(conf, who):
         cmd = ["open", "-a", C.APP]
     else:
@@ -130,7 +220,10 @@ def launch(conf, who):
     subprocess.run(cmd, check=True)
 
 
-def focus(pid):
+def focus(conf, key):
+    if C.WINDOWS:  # a second start with the same folder makes the running app show its window
+        return launch(conf, key)
+    pid = running(conf)[key]
     subprocess.run(["osascript", "-e", f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true'])
 
 
@@ -146,7 +239,7 @@ def cmd_switch(conf, target, yes, dry):
     if target == cur:
         print(f"Already on {lab[target]}.")
         if not dry:
-            focus(running(conf)[cur])
+            focus(conf, cur)
         return 0
     if not os.path.isdir(conf["profiles"][target]["data_dir"]):
         print(f"Account {lab[target]} is not set up yet. Run: claude-switch add")
@@ -189,6 +282,8 @@ def cmd_restore(conf):
 
 
 def write_sync_agent(dirs):
+    if C.WINDOWS:
+        return  # no launchd: the tray app runs cs_sync every 20 s
     plist = {
         "Label": SYNC_LABEL,
         "ProgramArguments": ["/usr/bin/python3", SYNC_SCRIPT],
@@ -258,7 +353,7 @@ def cmd_add(conf, label):
     os.makedirs(d, exist_ok=True)
     os.makedirs(C.STATE_DIR, exist_ok=True)
     open(PENDING, "w").close()
-    subprocess.run(["open", "-n", C.APP, "--args", f"--user-data-dir={d}"], check=True)
+    open_window(d)
     print(f"A new Claude window opened for account {conf['profiles'][key]['label']} ({key}). Log in there once.\n"
           "Note: Google sign-in returns to the first Claude window and is ignored. Either use\n"
           "email sign-in, or quit the other Claude window while you sign in.\n"
@@ -276,6 +371,11 @@ def cmd_doctor(conf):
         ok = os.path.isdir(d) and not os.path.islink(d)
         n = len([x for x in os.listdir(d) if x.startswith("local_")]) if ok else 0
         print(f"  {'ok ' if ok else 'BAD'} {n:4d} sessions  {d.replace(C.HOME, '~')}")
+    log = os.path.join(C.STATE_DIR, "sync.log")
+    last = [l for l in open(log)][-1:] if os.path.exists(log) else []
+    if C.WINDOWS:
+        print("sync: run by the tray app every 20 s" + (f" (last change: {last[0].strip()})" if last else ""))
+        return 0
     r = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{SYNC_LABEL}"], capture_output=True, text=True)
     if r.returncode != 0:
         print("sync agent: not loaded (run: claude-switch setup)")
@@ -288,7 +388,6 @@ def cmd_doctor(conf):
     if not os.path.isfile(script):
         print(f"sync agent: BROKEN — it runs a missing file ({script or 'unknown'}). Run: claude-switch setup")
         return 1
-    last = [l for l in open(os.path.join(C.STATE_DIR, "sync.log"))][-1:] if os.path.exists(os.path.join(C.STATE_DIR, "sync.log")) else []
     print("sync agent: running" + (f" (last change: {last[0].strip()})" if last else ""))
     return 0
 
@@ -308,8 +407,8 @@ def main(argv):
         return cmd_add(conf, " ".join(args[1:]))
     if cmd == "profiles":
         if "--json" in flags:
-            import json
-            print(json.dumps([{"key": k, "label": p["label"]} for k, p in conf["profiles"].items() if os.path.isdir(p["data_dir"])]))
+            print(json.dumps([{"key": k, "label": p["label"], "data_dir": p["data_dir"], "primary": is_primary(conf, k)}
+                              for k, p in conf["profiles"].items() if os.path.isdir(p["data_dir"])]))
         else:
             for k, p in conf["profiles"].items():
                 print(f"{k}  {p['label']:<12} {'ready' if os.path.isdir(p['data_dir']) else 'not set up'}")
