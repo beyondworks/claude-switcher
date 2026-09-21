@@ -12,7 +12,7 @@
 
 [English README](README.md)
 
-> Anthropic과 관계없는 비공식 커뮤니티 도구입니다. 지금은 macOS만 지원합니다.
+> Anthropic과 관계없는 비공식 커뮤니티 도구입니다. macOS를 지원하고, 윈도우는 실험판으로 지원합니다.
 
 ---
 
@@ -62,6 +62,22 @@ cd claude-switcher
 - 메뉴 막대 앱을 빌드해 `~/Applications`에 두고, 로그인할 때 자동으로 켜지게 합니다.
 - 지금 계정의 세션 폴더를 찾아 둡니다.
 
+### 윈도우 (실험판)
+
+필요한 것: 윈도우 10/11, [claude.ai/download](https://claude.ai/download)에서 받은 Claude 데스크톱 앱(사용자별 설치본),
+파이썬 3(`winget install Python.Python.3.12`). [최신 릴리스](https://github.com/beyondworks/claude-switcher/releases/latest)에서
+`claude-switcher-<버전>.zip`을 받아 압축을 풀고, 그 폴더에서 실행합니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\install.ps1
+```
+
+전환 방법은 맥과 같이 세 가지입니다. **Ctrl + Alt + Page Down**(Ctrl + Page Down만 쓰면 브라우저의 다음 탭 단축키와 겹칩니다),
+계정마다 색이 다른 트레이 아이콘, 새 터미널에서 `claude-switch`입니다. 윈도우에는 launchd가 없으므로 트레이 앱이 20초마다
+동기화도 실행합니다. 계정 추가 방법도 같습니다(트레이 아이콘 → **Add account…**).
+
+<p align="center"><img src="docs/windows-tray-icons.png" width="440" alt="윈도우 트레이 아이콘 — 계정별 색, 밝은·어두운 작업 표시줄"></p>
+
 ### 계정 추가 (계정마다 한 번)
 
 메뉴 막대 → **Add account…**를 누르거나, 터미널에서 실행합니다.
@@ -107,24 +123,29 @@ claude-switch doctor     # 폴더와 동기화 작업 점검
 ## 안전장치
 
 - **바로 지우지 않습니다.** 한 계정에서 지운 세션은 다른 계정 쪽에서도 빠지지만,
-  실제로는 `~/Library/Application Support/claude-switcher/trash/<날짜>/`로 옮겨집니다.
+  실제로는 `~/Library/Application Support/claude-switcher/trash/<날짜>/`(윈도우: `%LOCALAPPDATA%\claude-switcher\trash\`)로 옮겨집니다.
 - **대량 삭제 방지.** 한 번의 동기화가 전체의 20%를 넘는(그리고 5개가 넘는) 파일을 지우게 되면, 멈추고 기록만 남깁니다.
 - **실제 폴더만 씁니다.** 앱은 세션 폴더가 심볼릭 링크이면 저장을 거부합니다(`O_NOFOLLOW`로 엽니다).
   그래서 Claude Switcher는 폴더를 연결하지 않고 복사합니다.
 - **한 번에 한 계정만 켭니다.** 두 계정 이상이 켜져 있으면 전환하지 않습니다. 앱을 강제로 끄지 않고, 정상 종료를 최대 30초 기다립니다.
+  윈도우에서는 창을 닫아도 앱이 트레이로 숨기만 합니다. 그래서 윈도우가 로그아웃할 때 보내는 "세션 종료" 신호를 똑같이 보내고,
+  앱은 이 신호를 받아 정상적으로 종료합니다.
 - 전환 직전 몇 초 안에 한 변경은 아직 넘어가지 않았을 수 있습니다. 그래서 전환할 때 동기화를 한 번 더 실행합니다.
 
 ## 삭제
 
 ```bash
-./uninstall.sh
+./uninstall.sh                                                       # macOS
+powershell -ExecutionPolicy Bypass -File windows\uninstall.ps1       # 윈도우
 ```
 
 프로그램과 백그라운드 작업만 지웁니다. Claude 데이터 폴더, 로그인, 세션은 그대로 둡니다.
 
 ## 한계
 
-- macOS만 지원합니다. 윈도우는 시험하지 않았습니다.
+- **윈도우는 실험판입니다.** CI가 실제 Claude 설치본에서 A → B → A 전환, 계정마다 정상 종료, 폴더 찾기, 트레이 앱의 동기화를 확인합니다.
+  CI에는 로그인된 계정이 없어서 확인하지 못하는 것도 있습니다. 로그인된 상태의 전환, 작업 중 확인 창, 트레이 메뉴와 단축키 자체가 그렇습니다.
+  문제를 발견하시면 알려 주세요. Microsoft Store(MSIX)판 Claude는 아직 지원하지 않습니다.
 - 데스크톱 앱의 현재 폴더 구조와 로그 형식에 기대고 있습니다. 앱이 업데이트되면서 바뀔 수 있고, 그때는 `claude-switch doctor`에 나타납니다.
 - 여러 계정을 쓰는 것은 Anthropic 약관의 적용을 받습니다. 쓰시는 요금제 기준으로
   [이용 정책](https://www.anthropic.com/legal/aup)과 [소비자 약관](https://www.anthropic.com/legal/consumer-terms)을 확인해 주세요.
