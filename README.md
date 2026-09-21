@@ -120,6 +120,9 @@ claude-switch doctor     # check folders and the sync job
 | Code-tab session list (titles, archive state, deletions) | claude.ai web chats (stored per account on Anthropic's servers) |
 | Conversation transcripts (`~/.claude/projects`) | Cowork / local-agent sessions |
 | Routines stored with the session list | Usage limits and billing — each account has its own |
+| Desktop app settings: desktop MCP servers, preferences, starred sessions and session groups, trusted folders, Code-tab worktree records, MCP tool toggles (merged at every switch) | claude.ai connectors (Gmail, Notion, …) — connect them in each account |
+| Everything in `~/.claude`: `CLAUDE.md`, rules, skills, plugins, hooks, MCP servers in `~/.claude.json`, memory | Plugins the app installs per organization (Cowork plugins) — install them once at user level (`claude plugin install …`) to have them everywhere |
+| | The login itself (`config.json`, cookies) — kept per folder on purpose |
 | | **Prompt cache** — caches are isolated per organization, so the first message after switching re-reads the conversation without a cache and uses more of that account's quota |
 
 ## Safety
@@ -133,6 +136,10 @@ claude-switch doctor     # check folders and the sync job
   (it waits up to 30 s for a normal quit). On Windows, closing the window only hides Claude in the tray, so Claude
   Switcher sends the same "session ending" message Windows sends at sign-out; the app then quits normally.
 - A change made in the last few seconds before a switch may not have synced yet; the switch runs one extra sync to catch it.
+- **Settings are merged only while Claude is closed** (the app rewrites them from memory while it runs), so every switch
+  merges them between quitting one account and opening the next. Three-way merge against the last result: what one
+  account added, changed or removed reaches the others; if two changed the same value, the newer file wins.
+  `claude-switch share` does it by hand.
 
 ## Uninstall
 

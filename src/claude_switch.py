@@ -12,6 +12,8 @@ at a time. Code-tab session lists are kept identical by cs_sync (launchd).
   claude-switch profiles      list accounts (--json for the menu bar)
   claude-switch label a NAME  rename an account in the menu bar / messages
   claude-switch doctor        print config, folders and agent state
+  claude-switch share         merge the desktop settings of every account now (Claude must be closed;
+                              every switch does this by itself)
   claude-switch restore       if the default account (A) was just opened but you last used another one,
                               switch to that one (the menu bar app runs this for you; disable with
                               "restore_last": false in the config)
@@ -32,6 +34,7 @@ sys.path.insert(0, HERE)
 import json  # noqa: E402
 
 import cs_config as C  # noqa: E402
+import cs_share  # noqa: E402
 import cs_sync  # noqa: E402
 
 QUIT_TIMEOUT = 30
@@ -274,15 +277,27 @@ def cmd_switch(conf, target, yes, dry):
                 return 5
     print(f"{lab.get(cur, 'nothing')} -> {lab[target]}")
     if dry:
-        print("  [dry-run] quit, sync, launch")
+        print("  [dry-run] quit, sync sessions and shared settings, launch")
         return 0
     if cur != "none" and not quit_app(running(conf)[cur], conf["profiles"][cur]["data_dir"]):
         print(f"The app did not quit within {QUIT_TIMEOUT}s. Not forcing it (it may be saving).")
         return 4
     cs_sync.sync(conf["sync_dirs"])
+    share_settings(conf)
     remember(target)  # before launching, so the menu bar's restore check sees the new choice
     launch(conf, target)
     return 0
+
+
+def share_settings(conf):
+    """Desktop MCP servers, preferences, worktree records, tool toggles: the same in every account.
+    Only while no Claude window is open; the app rewrites these files from memory while it runs."""
+    if running(conf):
+        return None
+    changed = cs_share.share([p["data_dir"] for p in conf["profiles"].values()])
+    if changed:
+        print("shared settings merged: " + ", ".join(changed))
+    return changed
 
 
 def cmd_restore(conf):
@@ -437,6 +452,11 @@ def main(argv):
         return cmd_doctor(conf)
     if cmd == "_sync-script":  # used by tests
         print(SYNC_SCRIPT)
+        return 0
+    if cmd == "share":
+        if share_settings(conf) is None:
+            print("Quit Claude first: settings are merged only while no Claude window is open (every switch does it).")
+            return 3
         return 0
     if cmd == "restore":
         return cmd_restore(conf)

@@ -40,6 +40,8 @@ jobs:
           New-Item -ItemType Directory -Force $a, $b | Out-Null
           Set-Content "$a\local_from_a.json" '{"title":"made on A"}'
           Set-Content "$b\local_from_b.json" '{"title":"made on B"}'
+          # a desktop MCP server that only account A has; every switch must share it
+          Set-Content "$env:APPDATA\Claude\claude_desktop_config.json" '{"mcpServers":{"only-on-a":{"command":"x"}}}'
       - name: Install Claude Switcher
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File windows\install.ps1
@@ -63,6 +65,8 @@ jobs:
           # the quits were the app's normal shutdown path, not a kill
           Start-Sleep 5  # timeline: each quit must come after that run's "boot: done"
           foreach ($f in "$env:LOCALAPPDATA\Claude\logs\main.log", "$env:LOCALAPPDATA\Claude Second\logs\main.log") { "--- $f"; Get-Content $f | Select-String "^\d{4}-" | Where-Object { $_.Line -match "boot: done|session ending|Starting app|quit|Loaded https" } | ForEach-Object { $_.Line.Substring(0, [Math]::Min(140, $_.Line.Length)) } }
+          $cfg = Get-Content "$env:APPDATA\Claude Second\claude_desktop_config.json" -Raw | ConvertFrom-Json
+          if (-not $cfg.mcpServers.'only-on-a') { throw "desktop settings were not shared with B" }; "desktop settings shared with B"
           $n = (Get-ChildItem "$env:LOCALAPPDATA\Claude\logs", "$env:LOCALAPPDATA\Claude Second\logs" -Filter main.log | Select-String "Windows session ending").Count
           "normal-quit log lines: $n"; if ($n -lt 2) { throw "expected a normal quit of A and of B in the app logs" }
       - name: Folder detection reads the per-account logs
