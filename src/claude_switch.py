@@ -163,12 +163,13 @@ def win_wait_ready(pid, data_dir, timeout=30):
     started = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
                              creationflags=NO_WINDOW).stdout.strip()
     logs = [f for f in C.log_files([data_dir]) if os.path.exists(f)]
-    for _ in range(timeout):
+    for n in range(timeout):
         for f in logs:
             with open(f, errors="replace") as fh:
                 if any("boot: done" in l and l[:19] >= started for l in fh):
                     return True
         time.sleep(1)
+    print(f"  (the app did not report a finished start within {timeout}s; asking it to quit anyway)")
     return False
 
 
