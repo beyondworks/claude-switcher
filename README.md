@@ -62,17 +62,17 @@ cd claude-switcher
 The installer puts `claude-switch` in `~/.local/bin`, builds the menu bar app into `~/Applications`,
 starts it at login, and detects your current account's session folder.
 
-### Add your second account (once)
+### Add an account (once per account)
+
+Menu bar → **Add account…**, or in a terminal:
 
 ```bash
-claude-switch add Personal     # opens a second Claude window with its own data folder
+claude-switch add Personal     # opens a new Claude window with its own data folder
 ```
 
-Log in there once, open the **Code** tab once, then:
-
-```bash
-claude-switch setup            # finds the new account's session folder and starts syncing
-```
+Log in there once and open the **Code** tab once. The menu bar app notices the new account's session folder
+within about 15 seconds, starts syncing it and adds it to the menu. New accounts are named C, D, E … and each
+gets its own colour. (Without the menu bar app: `claude-switch setup`.)
 
 > **Google sign-in gotcha.** While another Claude window is open, the browser hands the Google sign-in back to
 > *that* window, which ignores it. Use **email sign-in** in the new window, or quit the other Claude window

@@ -34,6 +34,7 @@ QUIT_TIMEOUT = 30
 SYNC_LABEL = "io.github.claude-switcher.sync"
 SYNC_PLIST = os.path.join(C.HOME, "Library/LaunchAgents", SYNC_LABEL + ".plist")
 LAST = os.path.join(C.STATE_DIR, "last-account.json")
+PENDING = os.path.join(C.STATE_DIR, "pending-setup")  # set by `add`; the menu bar app runs `setup --quiet` while it exists
 
 
 def last_account():
@@ -198,15 +199,25 @@ def write_sync_agent(dirs):
     os.makedirs(os.path.dirname(SYNC_PLIST), exist_ok=True)
     os.makedirs(C.STATE_DIR, exist_ok=True)
     uid = os.getuid()
-    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{SYNC_LABEL}"], capture_output=True)
+    target = f"gui/{uid}/{SYNC_LABEL}"
+    subprocess.run(["launchctl", "bootout", target], capture_output=True)
+    for _ in range(20):  # launchd refuses a bootstrap while the old copy is still unloading
+        if subprocess.run(["launchctl", "print", target], capture_output=True).returncode != 0:
+            break
+        time.sleep(0.25)
     with open(SYNC_PLIST, "wb") as f:
         plistlib.dump(plist, f)
-    subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", SYNC_PLIST], check=True)
+    if subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", SYNC_PLIST], capture_output=True).returncode != 0:
+        time.sleep(1)
+        subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", SYNC_PLIST], check=True)
 
 
-def cmd_setup(conf):
+def cmd_setup(conf, quiet=False):
     data_dirs = [p["data_dir"] for p in conf["profiles"].values()]
     dirs = C.detect_session_dirs(data_dirs)
+    new = [d for d in dirs if d not in conf["sync_dirs"]]
+    if quiet and not new:
+        return 0  # menu bar polling after "Add account…": nothing new yet
     if not dirs:
         print("No session folders found in the Claude log yet. Open the Claude app once (Code tab), then run setup again.")
         return 7
@@ -221,6 +232,10 @@ def cmd_setup(conf):
     C.save(conf)
     rc = cs_sync.sync(dirs)  # first run merges everything (no deletions)
     write_sync_agent(dirs)
+    if new:
+        print(f"added {len(new)} session folder(s)")
+        if os.path.exists(PENDING):
+            os.remove(PENDING)
     print(f"sync folders ({len(dirs)}):")
     for d in dirs:
         print("  " + d.replace(C.HOME, "~"))
@@ -239,11 +254,14 @@ def cmd_add(conf, label):
     C.save(conf)
     d = conf["profiles"][key]["data_dir"]
     os.makedirs(d, exist_ok=True)
+    os.makedirs(C.STATE_DIR, exist_ok=True)
+    open(PENDING, "w").close()
     subprocess.run(["open", "-n", C.APP, "--args", f"--user-data-dir={d}"], check=True)
     print(f"A new Claude window opened for account {conf['profiles'][key]['label']} ({key}). Log in there once.\n"
           "Note: Google sign-in returns to the first Claude window and is ignored. Either use\n"
           "email sign-in, or quit the other Claude window while you sign in.\n"
-          "After logging in, open the Code tab once, then run: claude-switch setup")
+          "After logging in, open the Code tab once. The menu bar app then adds the account by itself\n"
+          "(without the menu bar app, run: claude-switch setup).")
     return 0
 
 
@@ -271,7 +289,7 @@ def main(argv):
         print(cur if "--short" in flags else {"none": "not running", "many": "several running"}.get(cur, conf["profiles"].get(cur, {}).get("label", cur)))
         return 0
     if cmd == "setup":
-        return cmd_setup(conf)
+        return cmd_setup(conf, "--quiet" in flags)
     if cmd == "add":
         return cmd_add(conf, " ".join(args[1:]))
     if cmd == "profiles":

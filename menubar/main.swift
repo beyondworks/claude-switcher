@@ -88,9 +88,26 @@ let claudeMask: CGImage? = {
                    provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
 }()
 
+/// Render once into a real bitmap. Drawing-handler images are drawn lazily, and menus did not show
+/// the masked logo that way (the menu bar button did) — a plain bitmap shows everywhere.
+func bitmap(_ img: NSImage) -> NSImage {
+    let pt = img.size, scale: CGFloat = 2
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(pt.width * scale), pixelsHigh: Int(pt.height * scale),
+                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return img }
+    rep.size = pt
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    img.draw(in: NSRect(origin: .zero, size: pt))
+    NSGraphicsContext.restoreGraphicsState()
+    let out = NSImage(size: pt)
+    out.addRepresentation(rep)
+    return out
+}
+
 func logoIcon(_ color: NSColor, dimmed: Bool) -> NSImage {
-    guard let m = claudeMask else { return starIcon(color, dimmed: dimmed) }
-    return NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+    guard let m = claudeMask else { return bitmap(starIcon(color, dimmed: dimmed)) }
+    return bitmap(NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
         guard let g = NSGraphicsContext.current?.cgContext else { return false }
         // CGImage masks treat white as "draw"; an alpha-style grey mask needs clip(to:mask:) with an image mask.
         guard let imgMask = CGImage(maskWidth: m.width, height: m.height, bitsPerComponent: 8, bitsPerPixel: 8,
@@ -100,7 +117,7 @@ func logoIcon(_ color: NSColor, dimmed: Bool) -> NSImage {
         (dimmed ? color.withAlphaComponent(0.35) : color).setFill()
         rect.fill()
         return true
-    }
+    })
 }
 
 final class App: NSObject, NSApplicationDelegate {
@@ -116,6 +133,17 @@ final class App: NSObject, NSApplicationDelegate {
         rebuildMenu()
         refresh()
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.refresh() }
+        // After "Add account…", keep re-detecting session folders until the new account's one shows up.
+        Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            let flag = NSHomeDirectory() + "/Library/Application Support/claude-switcher/pending-setup"
+            guard let self = self, !self.busy, FileManager.default.fileExists(atPath: flag) else { return }
+            DispatchQueue.global().async {
+                let out = run(["setup", "--quiet"])
+                DispatchQueue.main.async {
+                    if out.contains("added") { self.rebuildMenu() }
+                }
+            }
+        }
         registerHotKey()
     }
 
@@ -138,11 +166,31 @@ final class App: NSObject, NSApplicationDelegate {
             let it = NSMenuItem(title: "Switch to \(p.label)", action: #selector(toProfile(_:)), keyEquivalent: "")
             it.target = self
             it.representedObject = p.key
-            it.image = logoIcon(color(p.key), dimmed: false)
+            // The coloured logo goes inside the title: menu item `image`s were not drawn on this macOS.
+            let icon = NSTextAttachment()
+            icon.image = logoIcon(color(p.key), dimmed: false)
+            icon.bounds = CGRect(x: 0, y: -3, width: 15, height: 15)
+            let title = NSMutableAttributedString(attachment: icon)
+            title.append(NSAttributedString(string: "  Switch to \(p.label)", attributes: [.font: NSFont.menuFont(ofSize: 0)]))
+            it.attributedTitle = title
             menu.addItem(it)
         }
         menu.addItem(.separator())
+        let add = NSMenuItem(title: "Add account…", action: #selector(addAccount), keyEquivalent: "")
+        add.target = self
+        menu.addItem(add)
         menu.addItem(NSMenuItem(title: "Quit Claude Switcher", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
+    }
+
+    /// Opens a Claude window with a new data folder for the first login. The new account's session folder
+    /// is picked up by `claude-switch setup`, which the timer runs until it appears.
+    @objc func addAccount() {
+        let out = run(["add"])
+        let al = NSAlert()
+        al.messageText = "Log in to the new account"
+        al.informativeText = out
+        al.runModal()
+        rebuildMenu()
     }
 
     func refresh() {

@@ -11,6 +11,14 @@ MENU_LABEL="io.github.claude-switcher.menubar"
 MENU_PLIST="$HOME/Library/LaunchAgents/$MENU_LABEL.plist"
 
 say() { print -P "%F{cyan}==>%f $*"; }
+
+# launchd refuses a bootstrap while the old copy is still unloading ("5: Input/output error").
+reload_agent() {  # label plist
+  local target="gui/$(id -u)/$1"
+  launchctl bootout "$target" 2>/dev/null || true
+  for _ in {1..20}; do launchctl print "$target" >/dev/null 2>&1 || break; sleep 0.25; done
+  launchctl bootstrap "gui/$(id -u)" "$2" 2>/dev/null || { sleep 1; launchctl bootstrap "gui/$(id -u)" "$2"; }
+}
 die() { print -P "%F{red}error:%f $*" >&2; exit 1; }
 
 [[ "$(uname)" == "Darwin" ]] || die "macOS only for now."
@@ -52,8 +60,7 @@ cat > "$MENU_PLIST" <<PLIST
   <key>ProcessType</key><string>Interactive</string>
 </dict></plist>
 PLIST
-launchctl bootout "gui/$(id -u)/$MENU_LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$MENU_PLIST"
+reload_agent "$MENU_LABEL" "$MENU_PLIST"
 
 case ":$PATH:" in *":$BIN:"*) ;; *) say "Add $BIN to your PATH to use 'claude-switch' in a terminal.";; esac
 
