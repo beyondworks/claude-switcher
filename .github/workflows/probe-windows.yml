@@ -16,15 +16,6 @@ jobs:
           Get-Process | Where-Object { $_.Path -like "*AnthropicClaude*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep 5
           "== app folders"; Get-ChildItem "$env:LOCALAPPDATA\AnthropicClaude" -Directory | Select-Object Name | Out-String
-      - name: Quit-related code in the app
-        shell: pwsh
-        run: |
-          $asar = Get-ChildItem "$env:LOCALAPPDATA\AnthropicClaude" -Recurse -Filter app.asar | Sort-Object LastWriteTime | Select-Object -Last 1
-          "asar: $($asar.FullName)"
-          npx --yes @electron/asar extract $asar.FullName $env:RUNNER_TEMP\asar | Out-Null
-          $js = Get-ChildItem $env:RUNNER_TEMP\asar\.vite\build -Filter *.js -Recurse
-          function ctx($pat, $n, $w) { $js | Select-String -Pattern $pat -SimpleMatch | Select-Object -First $n | ForEach-Object { $l=$_.Line; $i=$l.IndexOf($pat); "--- $($_.Filename): " + $l.Substring([Math]::Max(0,$i-$w), [Math]::Min(2*$w, $l.Length-[Math]::Max(0,$i-$w))) } }
-          foreach ($p in '"session-end"','"window-all-closed"','"before-quit"','argv.includes("--','"second-instance"') { "===== $p"; ctx $p 3 350 }
       - name: Stub forwards --user-data-dir?
         shell: pwsh
         run: |
@@ -55,4 +46,8 @@ jobs:
           Start-Sleep 20
           $alive = Get-Process -Id $main.ProcessId -ErrorAction SilentlyContinue
           "after WM_ENDSESSION: alive=$([bool]$alive)"
-          "== new log lines"; Get-Content $log | Select-Object -Skip $before | Select-Object -First 40
+          "== shared log new lines"; Get-Content $log | Select-Object -Skip $before | Select-Object -First 40
+          "== every log file under the p3 data folder and the shared log folder"
+          Get-ChildItem C:\cs\p3, "$env:LOCALAPPDATA\Claude\logs" -Recurse -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object {
+            "--- $($_.FullName) ($($_.Length) B)"; Get-Content $_.FullName -Tail 12
+          }
