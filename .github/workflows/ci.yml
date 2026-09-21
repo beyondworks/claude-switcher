@@ -63,6 +63,7 @@ jobs:
           # the quits were the app's normal shutdown path, not a kill
           $hits = Get-ChildItem "$env:LOCALAPPDATA", "$env:APPDATA" -Recurse -Filter main.log -ErrorAction SilentlyContinue | Select-String "session ending|quit|before-quit|will-quit" -ErrorAction SilentlyContinue
           $hits | ForEach-Object { "$($_.Path): $($_.Line)" } | Select-Object -Last 40
+          Get-ChildItem "$env:LOCALAPPDATA", "$env:APPDATA" -Recurse -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "Claude" -and $_.FullName -notmatch "claude-switcher" } | ForEach-Object { "--- $($_.FullName) $($_.Length) B $($_.LastWriteTime)"; Get-Content $_.FullName -Tail 6 }
       - name: Tray app keeps the session lists identical
         shell: pwsh
         run: |
