@@ -1,5 +1,7 @@
 name: probe-windows
-on: workflow_dispatch
+on:
+  push:
+    branches: [probe/windows]
 jobs:
   probe:
     runs-on: windows-latest
