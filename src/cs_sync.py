@@ -96,7 +96,10 @@ def sync(dirs):
         log(f"stopped: would remove {len(removed)}/{len(names)} files — check manually")
         return 2
     for act, src, dst in plan:
-        copy(src, dst) if act == "copy" else trash(src, dirs)
+        try:
+            copy(src, dst) if act == "copy" else trash(src, dirs)
+        except OSError as e:  # Windows: the app may hold the file open; the next run retries
+            log(f"skipped {act} {os.path.basename(src)}: {e}")
     os.makedirs(_state_dir(), exist_ok=True)
     common = set.intersection(*(files(d) for d in dirs))
     with open(state + ".tmp", "w") as f:
