@@ -19,7 +19,6 @@ jobs:
   # so this job checks everything that works without a login on a real Claude install.
   windows:
     runs-on: windows-latest
-    strategy: { fail-fast: false, matrix: { attempt: [1, 2, 3, 4, 5, 6] } }
     steps:
       - uses: actions/checkout@v4
       - name: Unit tests
@@ -62,7 +61,7 @@ jobs:
           & $cs b --yes; if ($LASTEXITCODE -ne 0) { throw "switch to b failed: $LASTEXITCODE" }; WaitFor "b"; "A quit normally, B is running $(Get-Date -Format HH:mm:ss)"
           & $cs a --yes; if ($LASTEXITCODE -ne 0) { throw "switch to a failed: $LASTEXITCODE" }; WaitFor "a"; "back on A $(Get-Date -Format HH:mm:ss)"
           # the quits were the app's normal shutdown path, not a kill
-          Start-Sleep 5
+          Start-Sleep 5  # timeline: each quit must come after that run's "boot: done"
           foreach ($f in "$env:LOCALAPPDATA\Claude\logs\main.log", "$env:LOCALAPPDATA\Claude Second\logs\main.log") { "--- $f"; Get-Content $f | Select-String "^\d{4}-" | Where-Object { $_.Line -match "boot: done|session ending|Starting app|quit|Loaded https" } | ForEach-Object { $_.Line.Substring(0, [Math]::Min(140, $_.Line.Length)) } }
           $n = (Get-ChildItem "$env:LOCALAPPDATA\Claude\logs", "$env:LOCALAPPDATA\Claude Second\logs" -Filter main.log | Select-String "Windows session ending").Count
           "normal-quit log lines: $n"; if ($n -lt 2) { throw "expected a normal quit of A and of B in the app logs" }
