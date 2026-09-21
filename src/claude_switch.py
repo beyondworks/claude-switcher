@@ -24,7 +24,10 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# realpath: ~/.local/bin/claude-switch is a symlink; everything we point launchd at must be the real file.
+HERE = os.path.dirname(os.path.realpath(__file__))
+SYNC_SCRIPT = os.path.join(HERE, "cs_sync.py")
+sys.path.insert(0, HERE)
 import json  # noqa: E402
 
 import cs_config as C  # noqa: E402
@@ -186,10 +189,9 @@ def cmd_restore(conf):
 
 
 def write_sync_agent(dirs):
-    here = os.path.dirname(os.path.abspath(__file__))
     plist = {
         "Label": SYNC_LABEL,
-        "ProgramArguments": ["/usr/bin/python3", os.path.join(here, "cs_sync.py")],
+        "ProgramArguments": ["/usr/bin/python3", SYNC_SCRIPT],
         "WatchPaths": dirs,
         "StartInterval": 20,
         "RunAtLoad": True,
@@ -275,7 +277,19 @@ def cmd_doctor(conf):
         n = len([x for x in os.listdir(d) if x.startswith("local_")]) if ok else 0
         print(f"  {'ok ' if ok else 'BAD'} {n:4d} sessions  {d.replace(C.HOME, '~')}")
     r = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{SYNC_LABEL}"], capture_output=True, text=True)
-    print("sync agent:", "loaded" if r.returncode == 0 else "not loaded (run: claude-switch setup)")
+    if r.returncode != 0:
+        print("sync agent: not loaded (run: claude-switch setup)")
+        return 1
+    try:
+        with open(SYNC_PLIST, "rb") as f:
+            script = plistlib.load(f)["ProgramArguments"][1]
+    except (OSError, KeyError, IndexError, plistlib.InvalidFileException):
+        script = ""
+    if not os.path.isfile(script):
+        print(f"sync agent: BROKEN — it runs a missing file ({script or 'unknown'}). Run: claude-switch setup")
+        return 1
+    last = [l for l in open(os.path.join(C.STATE_DIR, "sync.log"))][-1:] if os.path.exists(os.path.join(C.STATE_DIR, "sync.log")) else []
+    print("sync agent: running" + (f" (last change: {last[0].strip()})" if last else ""))
     return 0
 
 
@@ -302,6 +316,9 @@ def main(argv):
         return 0
     if cmd == "doctor":
         return cmd_doctor(conf)
+    if cmd == "_sync-script":  # used by tests
+        print(SYNC_SCRIPT)
+        return 0
     if cmd == "restore":
         return cmd_restore(conf)
     if cmd == "label" and len(args) >= 3 and args[1] in conf["profiles"]:
