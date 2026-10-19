@@ -27,9 +27,18 @@ xcode-select -p >/dev/null 2>&1 || die "Xcode Command Line Tools are required (p
 
 say "Installing CLI and sync engine"
 mkdir -p "$LIB" "$BIN"
-cp "$HERE"/src/*.py "$LIB/"
+cp "$HERE"/src/*.py "$HERE"/src/cs_layout.js "$HERE"/src/package.json "$LIB/"
 chmod +x "$LIB/claude_switch.py" "$LIB/cs_sync.py"
 ln -sf "$LIB/claude_switch.py" "$BIN/claude-switch"
+
+# Sidebar layout sync needs node + one prebuilt package. Optional: without it, switching still works.
+NODE="$(command -v node || true)"
+if [[ -n "$NODE" ]]; then
+  say "Installing sidebar layout sync (node package classic-level)"
+  (cd "$LIB" && npm install --omit=dev --no-audit --no-fund --silent) || say "npm install failed; sidebar layout will not sync"
+else
+  say "node not found: sidebar layout will not sync (sessions still do). Install node, then run ./install.sh again."
+fi
 
 say "Building menu bar app"
 mkdir -p "$APP/Contents/MacOS"

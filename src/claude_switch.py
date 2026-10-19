@@ -34,6 +34,7 @@ sys.path.insert(0, HERE)
 import json  # noqa: E402
 
 import cs_config as C  # noqa: E402
+import cs_layout  # noqa: E402
 import cs_share  # noqa: E402
 import cs_sync  # noqa: E402
 
@@ -277,13 +278,16 @@ def cmd_switch(conf, target, yes, dry):
                 return 5
     print(f"{lab.get(cur, 'nothing')} -> {lab[target]}")
     if dry:
-        print("  [dry-run] quit, sync sessions and shared settings, launch")
+        print("  [dry-run] quit, sync sessions, shared settings and sidebar layout, launch")
         return 0
     if cur != "none" and not quit_app(running(conf)[cur], conf["profiles"][cur]["data_dir"]):
         print(f"The app did not quit within {QUIT_TIMEOUT}s. Not forcing it (it may be saving).")
         return 4
     cs_sync.sync(conf["sync_dirs"])
     share_settings(conf)
+    note = cs_layout.sync_switch(conf, cur, target)
+    if note:
+        print(note)
     remember(target)  # before launching, so the menu bar's restore check sees the new choice
     launch(conf, target)
     return 0
