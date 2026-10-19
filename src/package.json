@@ -1,6 +1,0 @@
-{
-  "name": "claude-switcher-layout",
-  "private": true,
-  "description": "Sidebar layout sync for Claude Switcher",
-  "dependencies": { "classic-level": "^3.0.0" }
-}

@@ -1,100 +1,96 @@
-"""Sidebar layout: copies the source account's sections into the target account and leaves everything else alone."""
+"""Sidebar layout: the account being left hands its layout to the account being entered, and the shared-settings
+merge cannot mix the two accounts' section lists together."""
 import json
 import os
-import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
 
-HERE = os.path.dirname(__file__)
-sys.path.insert(0, os.path.join(HERE, "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import cs_layout  # noqa: E402
+import cs_share  # noqa: E402
 
-PREFIX = "_https://claude.ai\\x00\\x01"
-SEED = r"""
-const { ClassicLevel } = require('classic-level');
-const enc = (o) => Buffer.concat([Buffer.from([0]), Buffer.from(JSON.stringify(o), 'utf16le')]);
-const P = '_https://claude.ai\x00\x01';
-(async () => {
-  const [dir, key, name] = process.argv.slice(1);
-  const db = new ClassicLevel(dir, { keyEncoding: 'buffer', valueEncoding: 'buffer' });
-  await db.open();
-  await db.put(Buffer.from(P + 'LSS-persisted.dframe-code-sections', 'latin1'),
-    enc({ value: { [key]: { sections: [{ id: 'cg-1', name }] } }, tabId: '', timestamp: 1 }));
-  await db.put(Buffer.from(P + 'LSS-persisted.dframe-group-scopes', 'latin1'),
-    enc({ value: { [key]: { groups: [{ id: 'cg-1', name }], assignments: {}, order: {} } }, tabId: '', timestamp: 1 }));
-  await db.put(Buffer.from(P + 'LSS-persisted.dframe-local-slice', 'latin1'), enc({ value: { pinnedOrder: [name] } }));
-  await db.put(Buffer.from(P + 'unrelated-login-entry', 'latin1'), Buffer.concat([Buffer.from([1]), Buffer.from('keep-' + name)]));
-  await db.close();
-})();
-"""
-READ = r"""
-const { ClassicLevel } = require('classic-level');
-const dec = (v) => (v[0] === 0 ? v.slice(1).toString('utf16le') : v.slice(1).toString('latin1'));
-(async () => {
-  const db = new ClassicLevel(process.argv[1], { keyEncoding: 'buffer', valueEncoding: 'buffer' });
-  await db.open();
-  const out = {};
-  for await (const [k, v] of db.iterator()) out[k.toString('latin1').slice(20)] = dec(v);
-  await db.close();
-  console.log(JSON.stringify(out));
-})();
-"""
+KA, KB = "acctA/orgA", "acctB/orgB"
 
 
-def have_engine():
-    return bool(cs_layout.find_node()) and os.path.isdir(os.path.join(cs_layout.HERE, "node_modules", "classic-level"))
+def cfg(key, names, pinned, other=None):
+    sections = [{"id": "cg-" + n, "kind": "manual", "name": n} for n in names]
+    return {"preferences": {
+        "sidebarMode": "epitaxy",
+        "menuBarEnabled": True,
+        "epitaxyPrefs": {
+            "dframe-code-sections": {key: {"sections": sections}, **(other or {})},
+            "dframe-group-scopes": {key: {"groups": [{"id": "cg-" + n, "name": n} for n in names], "assignments": {}, "order": {}}},
+            "dframe-local-slice": {"pinnedOrder": pinned},
+            "starred-local-code-sessions": [],
+            "keep-me": {"x": 1},
+        }}}
 
 
-@unittest.skipUnless(have_engine(), "node + classic-level not installed")
 class LayoutTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        os.environ["CS_STATE_DIR"] = os.path.join(self.tmp.name, "state")
-        cs_layout.C.STATE_DIR = os.environ["CS_STATE_DIR"]
-        self.env = dict(os.environ, NODE_PATH=os.path.join(cs_layout.HERE, "node_modules"))
-        self.node = cs_layout.find_node()
+        cs_layout.C.STATE_DIR = os.path.join(self.tmp.name, "state")
+        os.environ["CS_STATE_DIR"] = cs_layout.C.STATE_DIR
         self.a, self.b = os.path.join(self.tmp.name, "A"), os.path.join(self.tmp.name, "B")
-        for d, key, name in ((self.a, "acctA/orgA", "Alpha"), (self.b, "acctB/orgB", "Beta")):
-            os.makedirs(os.path.join(d, "Local Storage"))
-            subprocess.run([self.node, "-e", SEED, cs_layout.leveldb_dir(d), key, name], check=True, env=self.env)
+        os.makedirs(os.path.join(self.a, "claude-code-sessions", *KA.split("/")))
+        os.makedirs(os.path.join(self.b, "claude-code-sessions", *KB.split("/")))
+        self.conf = {"profiles": {"a": {"label": "A", "data_dir": self.a}, "b": {"label": "B", "data_dir": self.b}},
+                     "sync_dirs": [os.path.join(self.a, "claude-code-sessions", *KA.split("/")),
+                                   os.path.join(self.b, "claude-code-sessions", *KB.split("/"))]}
 
     def tearDown(self):
+        os.environ.pop("CS_STATE_DIR", None)
         self.tmp.cleanup()
 
-    def read(self, d):
-        r = subprocess.run([self.node, "-e", READ, cs_layout.leveldb_dir(d)], capture_output=True, text=True, check=True, env=self.env)
-        return json.loads(r.stdout)
+    def put(self, d, data):
+        with open(os.path.join(d, cs_layout.CONFIG), "w") as f:
+            json.dump(data, f, ensure_ascii=False)
 
-    def test_copies_layout_under_the_target_key_and_keeps_other_entries(self):
-        ok, msg = cs_layout.copy_layout(self.a, self.b, "acctA/orgA", "acctB/orgB")
-        self.assertTrue(ok, msg)
-        got = self.read(self.b)
-        sections = json.loads(got["LSS-persisted.dframe-code-sections"])["value"]
-        self.assertEqual(sections["acctB/orgB"]["sections"][0]["name"], "Alpha")
-        self.assertEqual(json.loads(got["LSS-persisted.dframe-local-slice"])["value"]["pinnedOrder"], ["Alpha"])
-        self.assertEqual(got["unrelated-login-entry"], "keep-Beta")  # not touched
-        self.assertTrue(os.path.isdir(os.path.join(cs_layout.C.STATE_DIR, "layout-backups")))
+    def get(self, d):
+        with open(os.path.join(d, cs_layout.CONFIG)) as f:
+            return json.load(f)["preferences"]["epitaxyPrefs"]
+
+    def names(self, d, key):
+        return [s["name"] for s in self.get(d)["dframe-code-sections"][key]["sections"]]
+
+    def test_account_key(self):
+        self.assertEqual(cs_layout.account_key(self.a, self.conf["sync_dirs"]), KA)
+        self.assertIsNone(cs_layout.account_key("/nowhere", self.conf["sync_dirs"]))
+
+    def test_switch_hands_layout_over_and_survives_the_merge(self):
+        self.put(self.a, cfg(KA, ["옛 A 섹션 1", "옛 A 섹션 2"], ["old"]))
+        self.put(self.b, cfg(KB, ["섹션 가", "섹션 나", "섹션 다"], ["p1", "p2"]))
+        snap = cs_layout.before_share(self.conf, "b", "a")
+        cs_share.share([self.a, self.b])  # the shared-settings merge, which unions list items
+        msg = cs_layout.after_share(self.conf, "b", "a", snap)
+        self.assertIn("synced", msg)
+        self.assertEqual(self.names(self.a, KA), ["섹션 가", "섹션 나", "섹션 다"])  # entered account has B's layout
+        self.assertEqual(self.names(self.b, KB), ["섹션 가", "섹션 나", "섹션 다"])  # left account is not mixed
+        self.assertEqual(self.get(self.a)["dframe-local-slice"]["pinnedOrder"], ["p1", "p2"])
+        self.assertEqual(self.get(self.a)["keep-me"], {"x": 1})  # unrelated entries stay
 
     def test_second_run_changes_nothing(self):
-        cs_layout.copy_layout(self.a, self.b, "acctA/orgA", "acctB/orgB")
-        ok, msg = cs_layout.copy_layout(self.a, self.b, "acctA/orgA", "acctB/orgB")
-        self.assertTrue(ok)
-        self.assertIn("already identical", msg)
+        self.put(self.a, cfg(KA, ["x"], ["o"]))
+        self.put(self.b, cfg(KB, ["y"], ["p"]))
+        snap = cs_layout.before_share(self.conf, "b", "a")
+        cs_layout.after_share(self.conf, "b", "a", snap)
+        snap = cs_layout.before_share(self.conf, "b", "a")
+        self.assertIn("identical", cs_layout.after_share(self.conf, "b", "a", snap))
 
-    def test_korean_names_survive(self):
-        subprocess.run([self.node, "-e", SEED, cs_layout.leveldb_dir(self.a), "acctA/orgA", "섹션 한글"], check=True, env=self.env)
-        cs_layout.copy_layout(self.a, self.b, "acctA/orgA", "acctB/orgB")
-        sections = json.loads(self.read(self.b)["LSS-persisted.dframe-code-sections"])["value"]
-        self.assertEqual(sections["acctB/orgB"]["sections"][0]["name"], "섹션 한글")
+    def test_missing_layout_is_reported_not_raised(self):
+        self.put(self.a, {"preferences": {}})
+        self.put(self.b, {"preferences": {}})
+        self.assertIsNone(cs_layout.before_share(self.conf, "b", "a"))
+        self.assertIsNone(cs_layout.after_share(self.conf, "b", "a", None))
 
-
-class KeyTest(unittest.TestCase):
-    def test_account_key_from_session_folder(self):
-        d = "/x/Claude Second"
-        self.assertEqual(cs_layout.account_key(d, ["/x/Claude/claude-code-sessions/a/b", d + "/claude-code-sessions/c/d"]), "c/d")
-        self.assertIsNone(cs_layout.account_key("/x/Other", [d + "/claude-code-sessions/c/d"]))
+    def test_backup_is_kept_and_trimmed(self):
+        self.put(self.a, cfg(KA, ["x"], ["o"]))
+        self.put(self.b, cfg(KB, ["y"], ["p"]))
+        for i in range(8):
+            self.put(self.b, cfg(KB, ["y" + str(i)], ["p"]))
+            cs_layout.after_share(self.conf, "b", "a", cs_layout.before_share(self.conf, "b", "a"))
+        self.assertLessEqual(len(os.listdir(os.path.join(cs_layout.C.STATE_DIR, "layout-backups"))), cs_layout.KEEP_BACKUPS)
 
 
 if __name__ == "__main__":

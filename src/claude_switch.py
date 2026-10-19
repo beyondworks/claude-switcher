@@ -284,8 +284,9 @@ def cmd_switch(conf, target, yes, dry):
         print(f"The app did not quit within {QUIT_TIMEOUT}s. Not forcing it (it may be saving).")
         return 4
     cs_sync.sync(conf["sync_dirs"])
+    layout = cs_layout.before_share(conf, cur, target) if cur != "none" else None
     share_settings(conf)
-    note = cs_layout.sync_switch(conf, cur, target)
+    note = cs_layout.after_share(conf, cur, target, layout)
     if note:
         print(note)
     remember(target)  # before launching, so the menu bar's restore check sees the new choice
