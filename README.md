@@ -139,6 +139,9 @@ claude-switch doctor     # check folders and the sync job
 - **Settings are merged only while Claude is closed** (the app rewrites them from memory while it runs), so every switch
   merges them between quitting one account and opening the next. Three-way merge against the last result: what one
   account added, changed or removed reaches the others; if two changed the same value, the newer file wins.
+  A newly added account brings only the app's defaults, so it adds what the others lack but never overrides or
+  removes their settings. The first time a settings file is merged, the first account that has it (usually A) is
+  the reference in the same way, even when the other accounts have been in use for a while.
   `claude-switch share` does it by hand.
 
 ## Uninstall
