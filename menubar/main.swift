@@ -5,6 +5,8 @@ import Carbon.HIToolbox
 // Hotkey: ⌘ + Page Down (next account). Icon: the Claude symbol from the installed app, one colour per account.
 
 let cli = NSHomeDirectory() + "/.local/bin/claude-switch"
+/// Account names and the account list live here (cs_config.CONF); any change to it means the menu is stale.
+let configPath = NSHomeDirectory() + "/.config/claude-switcher/config.json"
 // One colour per account, in order: A orange, B teal, then blue, purple, pink, yellow.
 let palette: [NSColor] = [
     NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1),  // #D97857
@@ -27,6 +29,15 @@ func run(_ args: [String]) -> String {
     p.waitUntilExit()
     return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+}
+
+func configStamp() -> Date? {
+    (try? FileManager.default.attributesOfItem(atPath: configPath))?[.modificationDate] as? Date
+}
+
+func loadProfiles() -> [Profile] {
+    let data = run(["profiles", "--json"]).data(using: .utf8) ?? Data()
+    return (try? JSONDecoder().decode([Profile].self, from: data)) ?? []
 }
 
 /// 12 rounded rays of alternating length. Drawn in code so no third-party artwork is shipped.
@@ -126,6 +137,7 @@ final class App: NSObject, NSApplicationDelegate {
     let stateLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     var busy = false
     var profiles: [Profile] = []
+    var profilesStamp: Date?  // config.json's modification date when `profiles` was loaded
     var previous = "none"
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -154,8 +166,13 @@ final class App: NSObject, NSApplicationDelegate {
 
     /// Menu = current state, "switch to next", one row per account (with its colour), quit.
     func rebuildMenu() {
-        let data = run(["profiles", "--json"]).data(using: .utf8) ?? Data()
-        profiles = (try? JSONDecoder().decode([Profile].self, from: data)) ?? []
+        let stamp = configStamp()  // read before loading: a change made while loading shows up as a newer stamp
+        buildMenu(loadProfiles(), stamp: stamp)
+    }
+
+    func buildMenu(_ loaded: [Profile], stamp: Date?) {
+        profiles = loaded
+        profilesStamp = stamp
         menu.removeAllItems()
         menu.addItem(stateLine)
         menu.addItem(.separator())
@@ -194,7 +211,11 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func refresh() {
+        let loadedStamp = profilesStamp
         DispatchQueue.global().async {
+            // A rename (`claude-switch label`) or a new account changes config.json: reload the names.
+            let stamp = configStamp()
+            let reloaded = stamp != loadedStamp ? loadProfiles() : nil
             let s = run(["status", "--short"])
             let label = run(["status"])
             // Nothing was running and the default account just opened (Dock icon, login item, reboot):
@@ -204,6 +225,7 @@ final class App: NSObject, NSApplicationDelegate {
             }
             self.previous = s
             DispatchQueue.main.async {
+                if let p = reloaded { self.buildMenu(p, stamp: stamp) }
                 let known = self.profiles.contains { $0.key == s }
                 self.item.button?.image = logoIcon(self.color(known ? s : (self.profiles.first?.key ?? "a")), dimmed: !known)
                 self.item.button?.imagePosition = .imageLeading
