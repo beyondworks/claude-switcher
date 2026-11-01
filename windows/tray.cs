@@ -89,7 +89,14 @@ class Tray : ApplicationContext {
         try { return Process.Start(psi); } catch { return null; }
     }
 
+    // Account names and the account list live here (cs_config.CONF); any change to it means the menu is stale.
+    static readonly string Config = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "claude-switcher", "config.json");
+    DateTime profilesStamp;  // Config's last write time when `profiles` was loaded
+
+    static DateTime ConfigStamp() { return File.Exists(Config) ? File.GetLastWriteTimeUtc(Config) : DateTime.MinValue; }
+
     void LoadProfiles() {
+        profilesStamp = ConfigStamp();  // read before loading: a change made while loading shows up as a newer stamp
         var p = Py(true, "claude_switch.py", "profiles", "--json");
         if (p == null) return;
         string json = p.StandardOutput.ReadToEnd();
@@ -132,6 +139,7 @@ class Tray : ApplicationContext {
     }
 
     void Background() {
+        if (ConfigStamp() != profilesStamp) LoadProfiles();  // a rename (`claude-switch label`) or a new account
         if (tick % 7 == 0 && (syncProc == null || syncProc.HasExited)) syncProc = Py(false, "cs_sync.py");  // ~20 s
         if (tick % 5 == 0) {  // ~15 s: finish "Add account…" once the new account has opened its Code tab
             if (File.Exists(Path.Combine(Base, "pending-setup"))) {
