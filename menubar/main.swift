@@ -180,7 +180,10 @@ final class App: NSObject, NSApplicationDelegate {
         next.target = self
         menu.addItem(next)
         for p in profiles {
-            let it = NSMenuItem(title: "Switch to \(p.label)", action: #selector(toProfile(_:)), keyEquivalent: "")
+            // The letter ties the name to the one shown next to the menu bar icon; "B (B)" would repeat it.
+            let key = p.key.uppercased()
+            let name = p.label.uppercased() == key ? p.label : "\(p.label) (\(key))"
+            let it = NSMenuItem(title: "Switch to \(name)", action: #selector(toProfile(_:)), keyEquivalent: "")
             it.target = self
             it.representedObject = p.key
             // The coloured logo goes inside the title: menu item `image`s were not drawn on this macOS.
@@ -188,7 +191,7 @@ final class App: NSObject, NSApplicationDelegate {
             icon.image = logoIcon(color(p.key), dimmed: false)
             icon.bounds = CGRect(x: 0, y: -3, width: 15, height: 15)
             let title = NSMutableAttributedString(attachment: icon)
-            title.append(NSAttributedString(string: "  Switch to \(p.label)", attributes: [.font: NSFont.menuFont(ofSize: 0)]))
+            title.append(NSAttributedString(string: "  Switch to \(name)", attributes: [.font: NSFont.menuFont(ofSize: 0)]))
             it.attributedTitle = title
             menu.addItem(it)
         }
