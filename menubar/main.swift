@@ -197,9 +197,12 @@ final class App: NSObject, NSApplicationDelegate {
         DispatchQueue.global().async {
             let s = run(["status", "--short"])
             let label = run(["status"])
-            // Nothing was running and the default account just opened (Dock icon, login item, reboot):
-            // reopen the account used last instead. `restore` is a no-op when that is already the case.
-            if !self.busy && self.previous == "none" && s == self.profiles.first?.key {
+            // The default account just opened without us (Dock icon, login item, reboot, or an app update
+            // relaunching another account into the default folder): reopen the account used last instead.
+            // Also catches another account turning into the default between two ticks (Mac asleep during the
+            // update). Not after "many": that is the user quitting the other window. Our own switches record
+            // their target first, so `restore` is a no-op for them.
+            if !self.busy && self.previous != s && self.previous != "many" && s == self.profiles.first?.key {
                 DispatchQueue.main.async { self.switchTo(["restore"]) }
             }
             self.previous = s
