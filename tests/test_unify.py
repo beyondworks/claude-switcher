@@ -128,6 +128,42 @@ class UnifyTest(unittest.TestCase):
             self.assertEqual(p["chicagoChoiceByOrgAccount"][f"{org}:{acc}"], {"choice": "on"})
             self.assertTrue(p["bypassPermissionsOptInByAccount"][acc])
 
+    @unittest.skipUnless(cs_share._node() and os.path.isdir(os.path.join(os.path.dirname(cs_share.LS_WRITER), "node_modules", "classic-level")), "node + classic-level needed")
+    def test_local_storage_gets_the_unified_values(self):
+        import subprocess
+        node = cs_share._node()
+        mk = os.path.join(self.tmp.name, "mk.mjs")
+        with open(mk, "w") as f:
+            f.write("import { ClassicLevel } from 'classic-level'; const db = new ClassicLevel(process.argv[2]); await db.open(); await db.put('x', 'y'); await db.close()\n")
+        env = dict(os.environ, NODE_PATH=os.path.join(os.path.dirname(cs_share.LS_WRITER), "node_modules"))
+        for d in self.dirs:
+            ldb = os.path.join(d, "Local Storage", "leveldb")
+            os.makedirs(os.path.dirname(ldb))
+            shutil_mk = os.path.join(os.path.dirname(cs_share.LS_WRITER), "_mk_test.mjs")
+            with open(shutil_mk, "w") as f:
+                f.write(open(mk).read())
+            try:
+                subprocess.run([node, shutil_mk, ldb], check=True, env=env, capture_output=True)
+            finally:
+                os.unlink(shutil_mk)
+        groups = {f"{A}/o1": {"groups": []}, f"{B}/o2": {"groups": [{"id": "g1"}]}, f"{C}/o3": {"groups": []}}
+        for d in self.dirs:
+            self.put(d, config({f"{A}/o1": [], f"{B}/o2": [1], f"{C}/o3": []}, groups, {}, {B: True}))
+        cs_share.share(self.dirs, unify_from=B, unify_to=[A, C])
+        rd = os.path.join(os.path.dirname(cs_share.LS_WRITER), "_rd_test.mjs")
+        with open(rd, "w") as f:
+            f.write("import { ClassicLevel } from 'classic-level'; const db = new ClassicLevel(process.argv[2], {keyEncoding:'buffer', valueEncoding:'buffer'}); "
+                    "const v = await db.get(Buffer.from('_https://claude.ai\\u0000\\u0001LSS-persisted.dframe-group-scopes', 'latin1')); "
+                    "const s = v[0] === 0 ? v.subarray(1).toString('utf16le') : v.subarray(1).toString('latin1'); console.log(s); await db.close()\n")
+        try:
+            for d in self.dirs:
+                out = subprocess.run([node, rd, os.path.join(d, "Local Storage", "leveldb")], check=True, capture_output=True, text=True).stdout
+                val = json.loads(out)["value"]
+                self.assertEqual(val[f"{A}/o1"], {"groups": [{"id": "g1"}]})
+        finally:
+            os.unlink(rd)
+        self.assertTrue(glob.glob(os.path.join(self.tmp.name, "state", "unify-backups.noindex", "*", "*", "Local Storage-leveldb")))
+
 
 if __name__ == "__main__":
     unittest.main()

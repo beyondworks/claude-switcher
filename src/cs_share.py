@@ -15,7 +15,9 @@ import copy
 import json
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -173,6 +175,48 @@ def _home(dirs, account):
 
 
 KEEP_BACKUPS = 20
+LS_WRITER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ls_write.mjs")
+
+
+def _node():
+    for p in (os.environ.get("CS_NODE"), shutil.which("node"), os.path.expanduser("~/Tools/node/bin/node"), "/opt/homebrew/bin/node", "/usr/local/bin/node"):
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+def write_local_storage(dirs, config, base, targets, tag, notes):
+    """The app reads these preferences from Local Storage ("LSS-persisted.<key>") and only mirrors them into the config
+    file, so write the unified values there too, in every data folder (2026-11-19: groups copied only into the config
+    came back empty at the next start). Backs the LevelDB folder up first. Never raises."""
+    if not base or not targets or not isinstance(config, dict):
+        return
+    epi = ((config.get("preferences") or {}).get("epitaxyPrefs")) or {}
+    keys = list(EPI_MAPS) + [pre + a for pre in EPI_PREFIXES for a in [base, *targets]]
+    values = {k: epi[k] for k in keys if k in epi}
+    node = _node()
+    if not values or not node or not os.path.exists(LS_WRITER):
+        notes.append("local storage: nothing to write or node/ls_write.mjs missing, skipped")
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(values, f, ensure_ascii=False)
+        vf = f.name
+    try:
+        for d in dirs:
+            ldb = os.path.join(d, "Local Storage", "leveldb")
+            if not os.path.isdir(ldb):
+                notes.append(f"local storage: {os.path.basename(d)} has none, skipped")
+                continue
+            dst = os.path.join(os.path.dirname(_base_dir()), "unify-backups.noindex", tag, os.path.basename(d), "Local Storage-leveldb")
+            if not os.path.exists(dst):
+                shutil.copytree(ldb, dst, ignore=shutil.ignore_patterns("LOCK"))
+            r = subprocess.run([node, LS_WRITER, ldb, vf], capture_output=True, text=True, timeout=60)
+            if r.returncode != 0:
+                notes.append(f"local storage: {os.path.basename(d)} not written ({r.stderr.strip()[:120] or r.returncode})")
+    except Exception as e:  # noqa: BLE001  a failure here must not stop the switch
+        notes.append(f"local storage: {type(e).__name__}: {e}"[:200])
+    finally:
+        os.unlink(vf)
 
 
 def _backup(paths, tag):
@@ -226,6 +270,8 @@ def share(data_dirs, unify_from=None, unify_to=None):
                 _write(p, result)
                 touched.append(name)
         _write(bp, result)
+        if name == "claude_desktop_config.json" and unify_from and targets:
+            write_local_storage(dirs, result, unify_from, targets, tag, notes)
     seen_p = os.path.join(os.path.dirname(_base_dir()), "unify-notes.json")
     if notes != _read(seen_p):  # log skip notes only when they change, not at every run
         with open(os.path.join(os.path.dirname(_base_dir()), "sync.log"), "a") as f:
