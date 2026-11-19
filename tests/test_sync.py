@@ -81,6 +81,28 @@ class SyncTest(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.dirs[0], "local_only_here.json")))
         self.assertTrue(os.path.exists(os.path.join(extra, "local_0.json")))
 
+    def test_app_tmp_files_are_never_copied(self):
+        write(os.path.join(self.dirs[0], "local_new.json.tmp"), "half")
+        self.assertEqual(self.run_sync(), 0)
+        for d in self.dirs[1:]:
+            self.assertFalse(os.path.exists(os.path.join(d, "local_new.json.tmp")))
+
+    def test_file_vanishing_mid_run_is_left_for_next_run(self):
+        real = os.path.getmtime
+        gone = os.path.join(self.dirs[1], "local_3.json")
+
+        def flaky(p):
+            if p == gone:
+                raise FileNotFoundError(p)
+            return real(p)
+        os.path.getmtime = flaky
+        try:
+            self.assertEqual(self.run_sync(), 0)  # used to raise FileNotFoundError
+        finally:
+            os.path.getmtime = real
+        for d in self.dirs:  # nothing was trashed on the half view
+            self.assertTrue(os.path.exists(os.path.join(d, "local_3.json")))
+
 
 class DetectTest(unittest.TestCase):
     def test_reads_account_org_folders_from_log(self):

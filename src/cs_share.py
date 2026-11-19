@@ -11,8 +11,10 @@ Three-way merge against the result of the previous run (state/share-base/<file>)
   - two folders changed the same key differently: the most recently modified file wins
 Only run while no Claude window is open (the app rewrites these files from memory while running).
 """
+import copy
 import json
 import os
+import shutil
 import sys
 import time
 
@@ -21,6 +23,15 @@ import cs_config  # noqa: E402
 
 SHARED_FILES = ["claude_desktop_config.json", "git-worktrees.json", "mcp-user-tool-toggles.json", "developer_settings.json"]
 _MISSING = object()
+
+# Account-keyed values the app reads only for the signed-in account ("account unify", 2026-11-19).
+# After the merge, the base account's value is copied onto every target account's key, so the sidebar
+# sections, session groups, per-folder permission modes, the bypass-permissions gate and MCP tool toggles
+# look the same whichever account is open. Set in config.json: "unify_from": "<account uuid>",
+# "unify_to": ["<account uuid>", ...]. A key that is missing or shaped differently is skipped and logged.
+EPI_MAPS = ["dframe-code-sections", "dframe-group-scopes"]          # epitaxyPrefs[name]["<account>/<org>"]
+EPI_PREFIX = "epitaxy-folder-permission-mode-v2."                    # epitaxyPrefs[prefix + "<account>"]
+PREF_MAPS = ["bypassPermissionsGateByAccount", "bypassPermissionsOptInByAccount"]  # preferences[name]["<account>"]
 
 
 def merge(base, versions):
@@ -74,8 +85,80 @@ def _write(p, data):
     os.replace(tmp, p)
 
 
-def share(data_dirs):
-    """Merge SHARED_FILES across data_dirs. Returns the names of files that changed somewhere."""
+def unify(name, data, base, targets, notes, source=None):
+    """Copy the base account's account-keyed values onto the target accounts. Returns a new value; never raises.
+    source: the base account's own file as it was on disk before the merge. Its values are the ones copied (and put
+    back on the base account too), because the merge's list union keeps the old order and mixes reorderings away."""
+    if not base or not targets or not isinstance(data, dict):
+        return data
+    out = copy.deepcopy(data)
+    src_all = source if isinstance(source, dict) else data
+
+    def account_map(m, sm, label):
+        if not isinstance(m, dict) or not isinstance(sm, dict):
+            notes.append(f"{name}: {label} missing or not an object, skipped")
+            return
+        if base not in sm:
+            notes.append(f"{name}: {label} has no value for the base account, skipped")
+            return
+        for t in [base, *targets]:
+            m[t] = copy.deepcopy(sm[base])
+
+    if name == "claude_desktop_config.json":
+        prefs = out.get("preferences")
+        sprefs = src_all.get("preferences") if isinstance(src_all.get("preferences"), dict) else {}
+        if not isinstance(prefs, dict):
+            notes.append(f"{name}: preferences missing, skipped")
+            return out
+        epi, sepi = prefs.get("epitaxyPrefs"), sprefs.get("epitaxyPrefs")
+        if isinstance(epi, dict) and isinstance(sepi, dict):
+            for m in EPI_MAPS:
+                mp, smp = epi.get(m), sepi.get(m)
+                if not isinstance(mp, dict) or not isinstance(smp, dict):
+                    notes.append(f"{name}: {m} missing, skipped")
+                    continue
+                src = [k for k in smp if k.split("/")[0] == base]
+                if len(src) != 1:
+                    notes.append(f"{name}: {m} has {len(src)} keys for the base account, skipped")
+                    continue
+                for t in [base, *targets]:
+                    dst = [k for k in mp if k.split("/")[0] == t]
+                    if len(dst) != 1:
+                        notes.append(f"{name}: {m} has {len(dst)} keys for account {t[:8]}, skipped")
+                        continue
+                    mp[dst[0]] = copy.deepcopy(smp[src[0]])
+            if isinstance(sepi.get(EPI_PREFIX + base), dict):
+                for t in [base, *targets]:
+                    epi[EPI_PREFIX + t] = copy.deepcopy(sepi[EPI_PREFIX + base])
+            else:
+                notes.append(f"{name}: {EPI_PREFIX}<base> missing, skipped")
+        else:
+            notes.append(f"{name}: epitaxyPrefs missing or not an object, skipped")
+        for m in PREF_MAPS:
+            account_map(prefs.get(m), sprefs.get(m), m)
+    elif name == "mcp-user-tool-toggles.json":
+        account_map(out.get("owners"), src_all.get("owners"), "owners")
+    return out
+
+
+def _backup(paths, tag):
+    """Copy the files about to be overwritten into a dated folder that Spotlight does not index."""
+    root = os.path.join(os.path.dirname(_base_dir()), "unify-backups.noindex", tag)
+    for p in paths:
+        if os.path.exists(p):
+            dst = os.path.join(root, os.path.basename(os.path.dirname(p)))
+            os.makedirs(dst, exist_ok=True)
+            shutil.copy2(p, os.path.join(dst, os.path.basename(p)))
+    return root
+
+
+def share(data_dirs, unify_from=None, unify_to=None):
+    """Merge SHARED_FILES across data_dirs, then unify account-keyed values. Returns the names of files that changed."""
+    if unify_from is None and unify_to is None:
+        conf = cs_config.load()
+        unify_from, unify_to = conf.get("unify_from"), conf.get("unify_to")
+    targets = [t for t in (unify_to or []) if t and t != unify_from]
+    notes, tag = [], time.strftime("%Y%m%d-%H%M%S")
     dirs = [d for d in data_dirs if os.path.isdir(d)]
     if len(dirs) < 2:
         return []
@@ -95,11 +178,21 @@ def share(data_dirs):
         result = merge(base, present)
         if result is _MISSING:
             continue
+        home = [d for d in dirs if unify_from and os.path.isdir(os.path.join(d, "claude-code-sessions", unify_from))]
+        source = _read(os.path.join(home[0], name)) if len(home) == 1 else None  # the base account's own copy, before the merge
+        unified = unify(name, result, unify_from, targets, notes, None if source is _MISSING else source)
+        if _id(unified) != _id(result):
+            _backup([p for p in paths if os.path.exists(p)], tag)
+            result = unified
         for p, v in zip(paths, vals):
             if _id(v) != _id(result):
                 _write(p, result)
                 touched.append(name)
         _write(bp, result)
+    if notes or touched:
+        with open(os.path.join(os.path.dirname(_base_dir()), "sync.log"), "a") as f:
+            for n in notes:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + "account unify: " + n + "\n")
     if touched:
         with open(os.path.join(os.path.dirname(_base_dir()), "sync.log"), "a") as f:
             f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + "shared settings merged: " + ", ".join(sorted(set(touched))) + "\n")
@@ -108,4 +201,4 @@ def share(data_dirs):
 
 if __name__ == "__main__":
     conf = cs_config.load()
-    print(share([p["data_dir"] for p in conf["profiles"].values()]))
+    print(share([p["data_dir"] for p in conf["profiles"].values()]))  # unify_from/unify_to come from the same config
