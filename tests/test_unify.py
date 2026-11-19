@@ -79,6 +79,8 @@ class UnifyTest(unittest.TestCase):
         log = open(os.path.join(self.tmp.name, "state", "sync.log")).read()
         self.assertIn("account unify: claude_desktop_config.json: dframe-code-sections missing", log)
         self.assertIn("no value for the base account", log)
+        cs_share.share(self.dirs, unify_from=B, unify_to=[A, C])  # same notes again: not logged twice
+        self.assertEqual(open(os.path.join(self.tmp.name, "state", "sync.log")).read(), log)
 
     def test_target_without_its_own_key_is_skipped(self):
         sections = {f"{B}/o2": [{"id": "s1"}], f"{A}/o1": [{"id": "a"}]}  # C never opened the sidebar
@@ -104,6 +106,7 @@ class UnifyTest(unittest.TestCase):
         os.makedirs(os.path.join(self.dirs[1], "claude-code-sessions", B))  # B lives in "Claude Second"
         os.makedirs(os.path.join(self.dirs[0], "claude-code-sessions", A))
         os.makedirs(os.path.join(self.dirs[0], "claude-code-sessions", B))  # a stale B folder in A's data folder
+        open(os.path.join(self.dirs[1], "claude-code-sessions", ".DS_Store"), "w").close()
         new = {f"{A}/o1": old[f"{A}/o1"], f"{B}/o2": {"sections": [{"id": "y"}, {"id": "x"}]}}
         self.put(self.dirs[1], config(new, {}, {}, {B: True}))
         cs_share.share(self.dirs, unify_from=B, unify_to=[A, C])

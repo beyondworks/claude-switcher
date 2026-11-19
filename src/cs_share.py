@@ -147,19 +147,25 @@ def _home(dirs, account):
     if not account:
         return None
     cands = [d for d in dirs if os.path.isdir(os.path.join(d, "claude-code-sessions", account))]
-    only = [d for d in cands if os.listdir(os.path.join(d, "claude-code-sessions")) == [account]]
+    only = [d for d in cands if [n for n in os.listdir(os.path.join(d, "claude-code-sessions")) if not n.startswith(".")] == [account]]
     pick = only or cands
     return pick[0] if len(pick) == 1 else None
 
 
+KEEP_BACKUPS = 20
+
+
 def _backup(paths, tag):
-    """Copy the files about to be overwritten into a dated folder that Spotlight does not index."""
-    root = os.path.join(os.path.dirname(_base_dir()), "unify-backups.noindex", tag)
+    """Copy the files about to be overwritten into a dated folder that Spotlight does not index (newest 20 kept)."""
+    top = os.path.join(os.path.dirname(_base_dir()), "unify-backups.noindex")
+    root = os.path.join(top, tag)
     for p in paths:
         if os.path.exists(p):
             dst = os.path.join(root, os.path.basename(os.path.dirname(p)))
             os.makedirs(dst, exist_ok=True)
             shutil.copy2(p, os.path.join(dst, os.path.basename(p)))
+    for old in sorted(os.listdir(top))[:-KEEP_BACKUPS]:
+        shutil.rmtree(os.path.join(top, old), ignore_errors=True)
     return root
 
 
@@ -200,10 +206,12 @@ def share(data_dirs, unify_from=None, unify_to=None):
                 _write(p, result)
                 touched.append(name)
         _write(bp, result)
-    if notes or touched:
+    seen_p = os.path.join(os.path.dirname(_base_dir()), "unify-notes.json")
+    if notes != _read(seen_p):  # log skip notes only when they change, not at every run
         with open(os.path.join(os.path.dirname(_base_dir()), "sync.log"), "a") as f:
             for n in notes:
                 f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + "account unify: " + n + "\n")
+        _write(seen_p, notes)
     if touched:
         with open(os.path.join(os.path.dirname(_base_dir()), "sync.log"), "a") as f:
             f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + "shared settings merged: " + ", ".join(sorted(set(touched))) + "\n")
