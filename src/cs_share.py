@@ -30,7 +30,9 @@ _MISSING = object()
 # look the same whichever account is open. Set in config.json: "unify_from": "<account uuid>",
 # "unify_to": ["<account uuid>", ...]. A key that is missing or shaped differently is skipped and logged.
 EPI_MAPS = ["dframe-code-sections", "dframe-group-scopes"]          # epitaxyPrefs[name]["<account>/<org>"]
-EPI_PREFIX = "epitaxy-folder-permission-mode-v2."                    # epitaxyPrefs[prefix + "<account>"]
+EPI_PREFIXES = ["epitaxy-folder-permission-mode-v2.",                 # epitaxyPrefs[prefix + "<account>"]: per-folder mode
+                "epitaxy-perm-mode-acks-v2."]                         # the "I understand" acks for those modes (else it asks again)
+ORG_ACCOUNT_MAPS = ["chicagoChoiceByOrgAccount"]                      # preferences[name]["<org>:<account>"] (computer use choice)
 PREF_MAPS = ["bypassPermissionsGateByAccount", "bypassPermissionsOptInByAccount"]  # preferences[name]["<account>"]
 
 
@@ -93,6 +95,7 @@ def unify(name, data, base, targets, notes, source=None):
         return data
     out = copy.deepcopy(data)
     src_all = source if isinstance(source, dict) else data
+    orgs = {}  # account -> org, read from the sidebar keys "<account>/<org>"
 
     def account_map(m, sm, label):
         if not isinstance(m, dict) or not isinstance(sm, dict):
@@ -127,15 +130,31 @@ def unify(name, data, base, targets, notes, source=None):
                         notes.append(f"{name}: {m} has {len(dst)} keys for account {t[:8]}, skipped")
                         continue
                     mp[dst[0]] = copy.deepcopy(smp[src[0]])
-            if isinstance(sepi.get(EPI_PREFIX + base), dict):
-                for t in [base, *targets]:
-                    epi[EPI_PREFIX + t] = copy.deepcopy(sepi[EPI_PREFIX + base])
-            else:
-                notes.append(f"{name}: {EPI_PREFIX}<base> missing, skipped")
+            for pre in EPI_PREFIXES:
+                if (pre + base) in sepi:
+                    for t in [base, *targets]:
+                        epi[pre + t] = copy.deepcopy(sepi[pre + base])
+                else:
+                    notes.append(f"{name}: {pre}<base> missing, skipped")
+            orgs = {k.split("/")[0]: k.split("/")[1] for k in (epi.get("dframe-code-sections") or {}) if k.count("/") == 1}
         else:
             notes.append(f"{name}: epitaxyPrefs missing or not an object, skipped")
         for m in PREF_MAPS:
             account_map(prefs.get(m), sprefs.get(m), m)
+        for m in ORG_ACCOUNT_MAPS:
+            mp, smp = prefs.get(m), sprefs.get(m)
+            src = [k for k in (smp or {}) if isinstance(smp, dict) and k.split(":")[-1] == base]
+            if not isinstance(mp, dict) and isinstance(smp, dict) and src:
+                mp = prefs[m] = {}
+            if not isinstance(mp, dict) or len(src) != 1:
+                notes.append(f"{name}: {m} has no single value for the base account, skipped")
+                continue
+            for t in [base, *targets]:
+                org = orgs.get(t)
+                if not org:
+                    notes.append(f"{name}: {m}: no org known for account {t[:8]}, skipped")
+                    continue
+                mp[f"{org}:{t}"] = copy.deepcopy(smp[src[0]])
     elif name == "mcp-user-tool-toggles.json":
         account_map(out.get("owners"), src_all.get("owners"), "owners")
     return out

@@ -115,6 +115,19 @@ class UnifyTest(unittest.TestCase):
             self.assertEqual(secs[f"{B}/o2"]["sections"], [{"id": "y"}, {"id": "x"}])
             self.assertEqual(secs[f"{A}/o1"]["sections"], [{"id": "y"}, {"id": "x"}])
 
+    def test_permission_acks_and_org_account_choice_follow(self):
+        modes = {f"epitaxy-folder-permission-mode-v2.{B}": {"/p": "bypassPermissions"}, f"epitaxy-perm-mode-acks-v2.{B}": ["/p:bypassPermissions"]}
+        data = config({f"{A}/o1": [], f"{B}/o2": [1], f"{C}/o3": []}, {f"{A}/o1": {}, f"{B}/o2": {}, f"{C}/o3": {}}, modes, {B: True},
+                      {"chicagoChoiceByOrgAccount": {f"o2:{B}": {"choice": "on"}}, "bypassPermissionsOptInByAccount": {B: True}})
+        for d in self.dirs:
+            self.put(d, data)
+        cs_share.share(self.dirs, unify_from=B, unify_to=[A, C])
+        p = self.get(self.dirs[0])["preferences"]
+        for acc, org in ((A, "o1"), (C, "o3")):
+            self.assertEqual(p["epitaxyPrefs"][f"epitaxy-perm-mode-acks-v2.{acc}"], ["/p:bypassPermissions"])
+            self.assertEqual(p["chicagoChoiceByOrgAccount"][f"{org}:{acc}"], {"choice": "on"})
+            self.assertTrue(p["bypassPermissionsOptInByAccount"][acc])
+
 
 if __name__ == "__main__":
     unittest.main()
