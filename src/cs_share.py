@@ -141,6 +141,17 @@ def unify(name, data, base, targets, notes, source=None):
     return out
 
 
+def _home(dirs, account):
+    """The data folder the base account signs in to: it has that account's session folder, and preferably no other
+    (a folder can keep a stale session folder of an account that once signed in there)."""
+    if not account:
+        return None
+    cands = [d for d in dirs if os.path.isdir(os.path.join(d, "claude-code-sessions", account))]
+    only = [d for d in cands if os.listdir(os.path.join(d, "claude-code-sessions")) == [account]]
+    pick = only or cands
+    return pick[0] if len(pick) == 1 else None
+
+
 def _backup(paths, tag):
     """Copy the files about to be overwritten into a dated folder that Spotlight does not index."""
     root = os.path.join(os.path.dirname(_base_dir()), "unify-backups.noindex", tag)
@@ -178,8 +189,8 @@ def share(data_dirs, unify_from=None, unify_to=None):
         result = merge(base, present)
         if result is _MISSING:
             continue
-        home = [d for d in dirs if unify_from and os.path.isdir(os.path.join(d, "claude-code-sessions", unify_from))]
-        source = _read(os.path.join(home[0], name)) if len(home) == 1 else None  # the base account's own copy, before the merge
+        home = _home(dirs, unify_from)
+        source = _read(os.path.join(home, name)) if home else None  # the base account's own copy, before the merge
         unified = unify(name, result, unify_from, targets, notes, None if source is _MISSING else source)
         if _id(unified) != _id(result):
             _backup([p for p in paths if os.path.exists(p)], tag)
