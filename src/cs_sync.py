@@ -9,6 +9,7 @@ so every account keeps a real folder and this script copies changes between them
         present in all folders at the last sync -> it was deleted somewhere -> move it to trash everywhere
         otherwise                               -> it is new -> copy it where it is missing
   - nothing is deleted outright: removed files go to <state>/trash/<date>/
+  - fields that belong to one account (ACCOUNT_KEYS) stay with that account's copy of a session
   - if one run would remove more than 20% of all files (and more than 5), it stops and logs instead
 """
 import json
@@ -22,6 +23,12 @@ import cs_config  # noqa: E402
 
 MAX_DELETE_RATIO = 0.2
 TMP_PREFIX = ".cs-tmp-"
+
+# Session fields that name objects of the account that wrote them, so every account keeps its own.
+# bridgeSessionIds lists the claude.ai sessions Remote Control used for this session. The app reuses the
+# last one; one from another account cannot be reused, so the app opens a new claude.ai session, which
+# shows a generated name instead of the session's title.
+ACCOUNT_KEYS = ("bridgeSessionIds",)
 
 
 def _dirs():
@@ -45,16 +52,50 @@ def files(d):
     return {n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n)) and not n.startswith(TMP_PREFIX)}
 
 
+def session(path):
+    """A session file (local_*.json) as a dict, or None for any other file or one that is not a JSON object."""
+    n = os.path.basename(path)
+    if not (n.startswith("local_") and n.endswith(".json")):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def shared(data):
+    return {k: v for k, v in data.items() if k not in ACCOUNT_KEYS}
+
+
 def same(p, q):
+    s, t = session(p), session(q)
+    if s is not None and t is not None:
+        return shared(s) == shared(t)
     if os.path.getsize(p) != os.path.getsize(q):
         return False
     with open(p, "rb") as x, open(q, "rb") as y:
         return x.read() == y.read()
 
 
+def merged(src, dst):
+    """src's fields, with dst's own values for ACCOUNT_KEYS (left out where dst has none)."""
+    own = session(dst) or {}
+    out = shared(src)
+    out.update((k, own[k]) for k in ACCOUNT_KEYS if k in own)
+    return out
+
+
 def copy(src, dst):
     tmp = os.path.join(os.path.dirname(dst), TMP_PREFIX + os.path.basename(dst))
-    shutil.copy2(src, tmp)
+    data = session(src)
+    if data is None:
+        shutil.copy2(src, tmp)
+    else:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(merged(data, dst), f, ensure_ascii=False, separators=(",", ":"))  # the app's own format
+        shutil.copystat(src, tmp)  # the source's time, so newest-wins does not send it back next run
     os.replace(tmp, dst)  # atomic: the app never sees a half-written file
 
 

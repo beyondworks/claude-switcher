@@ -1,4 +1,5 @@
 """Tests for the sync engine and log-based folder detection. Run: python3 -m unittest discover tests"""
+import json
 import os
 import sys
 import tempfile
@@ -80,6 +81,82 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(cs_sync.sync(self.dirs + [extra]), 0)
         self.assertTrue(os.path.exists(os.path.join(self.dirs[0], "local_only_here.json")))
         self.assertTrue(os.path.exists(os.path.join(extra, "local_0.json")))
+
+
+class RemoteControlIdsTest(unittest.TestCase):
+    """bridgeSessionIds name claude.ai sessions of the account that created them. The app reuses the
+    last one; another account's cannot be reused, so the app opens a new claude.ai session that lacks
+    the session's title. Each account must keep its own."""
+
+    NAME = "local_s.json"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.a, self.b = (os.path.join(self.tmp.name, n) for n in ("a", "b"))
+        for d in (self.a, self.b):
+            os.makedirs(d)
+        os.environ["CS_STATE_DIR"] = os.path.join(self.tmp.name, "state")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def put(self, d, session, age=0):
+        p = os.path.join(d, self.NAME)
+        write(p, json.dumps(session, ensure_ascii=False, separators=(",", ":")))
+        t = time.time() + age
+        os.utime(p, (t, t))
+        return p
+
+    def load(self, d):
+        return json.loads(read(os.path.join(d, self.NAME)))
+
+    def test_edit_keeps_the_receiving_accounts_ids(self):
+        for b_ids in (["session_b1"], None):
+            with self.subTest(b_ids=b_ids):
+                b = {"title": "Old", "isArchived": False}
+                if b_ids is not None:
+                    b["bridgeSessionIds"] = b_ids
+                self.put(self.b, b)
+                self.put(self.a, {"title": "New", "bridgeSessionIds": ["session_a1", "session_a2"], "isArchived": True}, age=5)
+                self.assertEqual(cs_sync.sync([self.a, self.b]), 0)
+                got = self.load(self.b)
+                self.assertEqual((got["title"], got["isArchived"]), ("New", True))
+                self.assertEqual(got.get("bridgeSessionIds"), b_ids)
+                self.assertEqual(self.load(self.a)["bridgeSessionIds"], ["session_a1", "session_a2"])
+
+    def test_new_session_reaches_other_account_without_ids(self):
+        self.put(self.a, {"title": "Fresh", "bridgeSessionIds": ["session_a1"]})
+        cs_sync.sync([self.a, self.b])
+        self.assertEqual(self.load(self.b), {"title": "Fresh"})
+
+    def test_ids_alone_never_count_as_a_change(self):
+        """Copies that differ only in their own ids are in sync: nothing is copied either way,
+        including when the app appends an id on one account."""
+        self.put(self.a, {"title": "T", "bridgeSessionIds": ["session_a1"]})
+        self.put(self.b, {"title": "T", "bridgeSessionIds": ["session_b1"]}, age=-5)
+        cs_sync.sync([self.a, self.b])
+        self.put(self.b, {"title": "T", "bridgeSessionIds": ["session_b1", "session_b2"]}, age=5)
+        before = {d: os.path.getmtime(os.path.join(d, self.NAME)) for d in (self.a, self.b)}
+        cs_sync.sync([self.a, self.b])
+        self.assertEqual(self.load(self.a)["bridgeSessionIds"], ["session_a1"])
+        self.assertEqual(self.load(self.b)["bridgeSessionIds"], ["session_b1", "session_b2"])
+        self.assertEqual({d: os.path.getmtime(os.path.join(d, self.NAME)) for d in (self.a, self.b)}, before)
+
+    def test_written_like_the_app_and_dated_like_the_source(self):
+        """Compact UTF-8 JSON, as the app writes it, with the source's modification time, so the
+        newest-wins rule does not bounce the merged copy back on the next run."""
+        self.put(self.b, {"title": "x", "bridgeSessionIds": ["session_b1"]})
+        src = self.put(self.a, {"title": "새 이름", "n": 1}, age=5)
+        cs_sync.sync([self.a, self.b])
+        dst = os.path.join(self.b, self.NAME)
+        self.assertEqual(read(dst), '{"title":"새 이름","n":1,"bridgeSessionIds":["session_b1"]}')
+        self.assertEqual(os.path.getmtime(dst), os.path.getmtime(src))
+
+    def test_other_files_are_copied_byte_for_byte(self):
+        text = '{\n  "bridgeSessionIds": ["session_a1"]\n}\n'
+        write(os.path.join(self.a, "scheduled-tasks.json"), text)
+        cs_sync.sync([self.a, self.b])
+        self.assertEqual(read(os.path.join(self.b, "scheduled-tasks.json")), text)
 
 
 class DetectTest(unittest.TestCase):
