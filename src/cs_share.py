@@ -201,22 +201,26 @@ def write_local_storage(dirs, config, base, targets, tag, notes):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(values, f, ensure_ascii=False)
         vf = f.name
+    top = os.path.join(os.path.dirname(_base_dir()), "unify-backups.noindex")
     try:
         for d in dirs:
-            ldb = os.path.join(d, "Local Storage", "leveldb")
-            if not os.path.isdir(ldb):
-                notes.append(f"local storage: {os.path.basename(d)} has none, skipped")
-                continue
-            dst = os.path.join(os.path.dirname(_base_dir()), "unify-backups.noindex", tag, os.path.basename(d), "Local Storage-leveldb")
-            if not os.path.exists(dst):
-                shutil.copytree(ldb, dst, ignore=shutil.ignore_patterns("LOCK"))
-            r = subprocess.run([node, LS_WRITER, ldb, vf], capture_output=True, text=True, timeout=60)
-            if r.returncode != 0:
-                notes.append(f"local storage: {os.path.basename(d)} not written ({r.stderr.strip()[:120] or r.returncode})")
-    except Exception as e:  # noqa: BLE001  a failure here must not stop the switch
-        notes.append(f"local storage: {type(e).__name__}: {e}"[:200])
+            try:  # one folder failing must not stop the others, nor the switch
+                ldb = os.path.join(d, "Local Storage", "leveldb")
+                if not os.path.isdir(ldb):
+                    notes.append(f"local storage: {os.path.basename(d)} has none, skipped")
+                    continue
+                dst = os.path.join(top, tag, os.path.basename(d), "Local Storage-leveldb")
+                if not os.path.exists(dst):
+                    shutil.copytree(ldb, dst, ignore=shutil.ignore_patterns("LOCK"))
+                r = subprocess.run([node, LS_WRITER, ldb, vf], capture_output=True, text=True, timeout=60)
+                if r.returncode != 0:
+                    notes.append(f"local storage: {os.path.basename(d)} not written ({r.stderr.strip()[:120] or r.returncode})")
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"local storage: {os.path.basename(d)}: {type(e).__name__}: {e}"[:200])
     finally:
         os.unlink(vf)
+        for old in sorted(os.listdir(top))[:-KEEP_BACKUPS] if os.path.isdir(top) else []:  # same 20-backup limit as _backup()
+            shutil.rmtree(os.path.join(top, old), ignore_errors=True)
 
 
 def _backup(paths, tag):
