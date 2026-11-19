@@ -136,7 +136,8 @@ def unify(name, data, base, targets, notes, source=None):
                         epi[pre + t] = copy.deepcopy(sepi[pre + base])
                 else:
                     notes.append(f"{name}: {pre}<base> missing, skipped")
-            orgs = {k.split("/")[0]: k.split("/")[1] for k in (epi.get("dframe-code-sections") or {}) if k.count("/") == 1}
+            pairs = [k.split("/") for k in (epi.get("dframe-code-sections") or {}) if k.count("/") == 1]
+            orgs = {a: o for a, o in pairs if sum(1 for x, _ in pairs if x == a) == 1}  # only accounts with a single org key
         else:
             notes.append(f"{name}: epitaxyPrefs missing or not an object, skipped")
         for m in PREF_MAPS:
