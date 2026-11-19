@@ -1,0 +1,1 @@
+{ "name": "claude-switcher-ls-writer", "private": true, "type": "module", "dependencies": { "classic-level": "1.4.1" } }

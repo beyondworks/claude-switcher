@@ -42,14 +42,18 @@ def log(msg):
 
 
 def files(d):
-    return {n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n)) and not n.startswith(TMP_PREFIX)}
+    # the app writes local_*.json through a temporary *.tmp and renames it: never copy those half-written files
+    return {n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n)) and not n.startswith(TMP_PREFIX) and not n.endswith(".tmp")}
 
 
 def same(p, q):
-    if os.path.getsize(p) != os.path.getsize(q):
-        return False
-    with open(p, "rb") as x, open(q, "rb") as y:
-        return x.read() == y.read()
+    try:
+        if os.path.getsize(p) != os.path.getsize(q):
+            return False
+        with open(p, "rb") as x, open(q, "rb") as y:
+            return x.read() == y.read()
+    except OSError:  # one copy vanished meanwhile: treat as the same, so nothing is copied over it this run
+        return True
 
 
 def copy(src, dst):
@@ -81,9 +85,18 @@ def sync(dirs):
     have = {d: files(d) for d in dirs}
     names = set().union(*have.values())
     plan = []
+    def mtime(d, n):
+        try:
+            return os.path.getmtime(os.path.join(d, n))
+        except OSError:  # the app replaced or removed it meanwhile (its own *.tmp files come and go)
+            return None
+
     for n in sorted(names):
-        present = [d for d in dirs if n in have[d]]
-        newest = max(present, key=lambda d: os.path.getmtime(os.path.join(d, n)))
+        times = {d: mtime(d, n) for d in dirs if n in have[d]}
+        if any(t is None for t in times.values()):  # changing under us: leave it for the next run (never trash on a half view)
+            continue
+        present = list(times)
+        newest = max(present, key=lambda d: times[d])
         src = os.path.join(newest, n)
         if len(present) == len(dirs):
             plan += [("copy", src, os.path.join(d, n)) for d in present if d != newest and not same(src, os.path.join(d, n))]
