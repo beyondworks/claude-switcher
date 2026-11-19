@@ -123,6 +123,7 @@ claude-switch doctor     # check folders and the sync job
 | Desktop app settings: desktop MCP servers, preferences, starred sessions and session groups, trusted folders, Code-tab worktree records, MCP tool toggles (merged at every switch) | claude.ai connectors (Gmail, Notion, …) — connect them in each account |
 | Everything in `~/.claude`: `CLAUDE.md`, rules, skills, plugins, hooks, MCP servers in `~/.claude.json`, memory | Plugins the app installs per organization (Cowork plugins) — install them once at user level (`claude plugin install …`) to have them everywhere |
 | | The login itself (`config.json`, cookies) — kept per folder on purpose |
+| | **Remote Control sessions on claude.ai** — each account keeps its own claude.ai session for each Code session and reuses it after every switch. The first time an account uses Remote Control for a session, the app opens a new claude.ai session that shows a generated name; rename it there once |
 | | **Prompt cache** — caches are isolated per organization, so the first message after switching re-reads the conversation without a cache and uses more of that account's quota |
 
 ## Safety
